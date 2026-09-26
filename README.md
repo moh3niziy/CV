@@ -1,4 +1,4 @@
-# Mohsen Izi — CV
+# Mohsen Iziy — CV
 
 This is my personal CV website. I'm a mobile developer building cross-platform apps (Android, iOS, Web) with **Flutter** and **Dart**, including the AI apps Findora, Dana and Doktorify.
 
