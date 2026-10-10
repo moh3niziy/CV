@@ -87,12 +87,12 @@ const store = {
   set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* noop */ } },
 };
 
-const ADMIN_PASSWORD = '1234';
-
 const state = {
-  isAdmin: store.get('hd_admin') === '1',
-  pub: null,        // داده برای نمای مشتری
+  password: store.get('hd_pass'),
+  get isAdmin() { return !!this.password; },
+  pub: null,        // داده برای نمای مشتری (بدون اطلاعات مشتری‌ها)
   admin: null,      // دادهٔ کامل ادمین
+  version: 0,       // نسخهٔ داده در دیتابیس، برای جلوگیری از بازنویسی هم‌زمان
   barberId: store.get('hd_barber'),
   date: todayISO(),
   stripStart: todayISO(),
@@ -102,12 +102,32 @@ const state = {
 class AppError extends Error {}
 
 /* ================================================================ data */
-// داده‌ها در فایل data.json پروژه قرار دارند. تغییرات پنل ادمین در حافظهٔ مرورگر ذخیره می‌شود
-// و از تنظیمات می‌توان فایل data.json به‌روز را دانلود کرد و جایگزین فایل پروژه کرد.
-const DATA_KEY = 'hd_data';
+// داده‌ها در دیتابیس Cloudflare D1 ذخیره می‌شوند و از طریق API همین سایت (worker.js) خوانده و نوشته می‌شوند.
+function setPassword(p) { state.password = p; store.set('hd_pass', p); }
+
+async function api(method, path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.password) headers['X-Admin-Password'] = state.password;
+  let res;
+  try {
+    res = await fetch('/api' + path, { method, headers, cache: 'no-store', body: body ? JSON.stringify(body) : undefined });
+  } catch {
+    throw new AppError('ارتباط با سرور برقرار نشد. اتصال اینترنت را بررسی کنید.');
+  }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 401 && path.startsWith('/admin')) {
+      setPassword(null);
+      state.admin = null;
+      location.hash = '#/';
+    }
+    throw Object.assign(new AppError(json.error || 'خطایی رخ داد'), { status: res.status });
+  }
+  return json;
+}
 
 function emptyData() {
-  return { settings: { shopName: 'آرایشگاه من' }, barbers: [], appointments: [], updatedAt: 0 };
+  return { settings: { shopName: 'آرایشگاه من' }, barbers: [], appointments: [] };
 }
 function normalizeData(d) {
   const base = emptyData();
@@ -115,48 +135,43 @@ function normalizeData(d) {
     settings: { ...base.settings, ...(d && d.settings) },
     barbers: Array.isArray(d?.barbers) ? d.barbers : [],
     appointments: Array.isArray(d?.appointments) ? d.appointments : [],
-    updatedAt: Number(d?.updatedAt) || 0,
   };
 }
 
-async function readData() {
-  let local = null, file = null;
-  try { local = normalizeData(JSON.parse(store.get(DATA_KEY))); } catch { local = null; }
-  try {
-    const res = await fetch(`data.json?t=${Date.now()}`, { cache: 'no-store' });
-    if (res.ok) file = normalizeData(await res.json());
-  } catch { file = null; }
-  if (!local && !file) return emptyData();
-  // هر کدام جدیدتر باشد استفاده می‌شود
-  if (!local) return file;
-  if (!file) return local;
-  return file.updatedAt > local.updatedAt ? file : local;
+async function loadAdmin() {
+  const { data, version } = await api('GET', '/admin/data');
+  state.admin = normalizeData(data);
+  state.version = version;
+  return state.admin;
 }
 
-function writeData(data) {
-  try {
-    localStorage.setItem(DATA_KEY, JSON.stringify(data));
-  } catch {
-    throw new AppError('ذخیره در حافظهٔ مرورگر ممکن نشد');
-  }
-}
-
-async function mutate(fn) {
-  const data = await readData();
-  const result = fn(data);
+async function saveAdmin(data) {
   const keepFrom = addDays(todayISO(), -180); // نوبت‌های قدیمی‌تر از ۶ ماه پاک می‌شوند
   data.appointments = data.appointments.filter((a) => a.date >= keepFrom);
-  data.updatedAt = Date.now();
-  writeData(data);
+  const { version } = await api('PUT', '/admin/data', { data, version: state.version });
   state.admin = data;
-  return result;
+  state.version = version;
+}
+
+// خواندن آخرین نسخه، اعمال تغییر و ذخیره؛ اگر دستگاه دیگری هم‌زمان ذخیره کرده باشد دوباره تلاش می‌کند
+async function mutate(fn) {
+  for (let attempt = 0; ; attempt++) {
+    const data = structuredClone(await loadAdmin());
+    const result = fn(data);
+    try {
+      await saveAdmin(data);
+      return result;
+    } catch (err) {
+      if (err.status !== 409 || attempt >= 3) throw err;
+    }
+  }
 }
 
 function exportData() {
   const blob = new Blob([JSON.stringify(state.admin, null, 2) + '\n'], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'data.json';
+  a.download = `hairdresser-backup-${todayISO()}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -167,19 +182,12 @@ async function importData(file) {
   let parsed;
   try { parsed = JSON.parse(await file.text()); } catch { throw new AppError('فایل انتخاب‌شده معتبر نیست'); }
   if (!parsed || !Array.isArray(parsed.barbers)) throw new AppError('فایل انتخاب‌شده معتبر نیست');
-  const data = normalizeData(parsed);
-  data.updatedAt = Date.now();
-  writeData(data);
-  state.admin = data;
+  await loadAdmin();
+  await saveAdmin(normalizeData(parsed));
 }
 
 async function loadPublic() {
-  const data = await readData();
-  state.pub = { settings: data.settings, barbers: data.barbers, busy: data.appointments.filter((a) => a.date >= todayISO()) };
-}
-
-async function loadAdmin() {
-  state.admin = await readData();
+  state.pub = await api('GET', '/public');
 }
 
 /* ================================================================ validation */
@@ -434,9 +442,11 @@ function openLogin() {
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
-      if (toEn(pin.value) !== ADMIN_PASSWORD) throw new AppError('رمز عبور اشتباه است');
-      state.isAdmin = true;
-      store.set('hd_admin', '1');
+      const password = toEn(pin.value);
+      await fetch('/api/login', { method: 'POST', headers: { 'X-Admin-Password': password } })
+        .then((r) => { if (!r.ok) throw new AppError(r.status === 401 ? 'رمز عبور اشتباه است' : 'ارتباط با سرور برقرار نشد'); },
+              (e) => { throw e instanceof AppError ? e : new AppError('ارتباط با سرور برقرار نشد'); });
+      setPassword(password);
       closeModal();
       location.hash = '#/admin';
     } catch (err) {
@@ -596,15 +606,15 @@ function adminBarbersHTML() {
       </div>
     </form>
 
-    <div class="section-title"><span>فایل داده‌ها</span></div>
+    <div class="section-title"><span>نسخهٔ پشتیبان</span></div>
     <div class="card barber-row">
       <div class="info">
-        <div class="name" style="font-size:15px">data.json</div>
-        <div class="hint muted" style="font-size:13px">تغییرات روی همین دستگاه ذخیره می‌شود. برای به‌روز کردن فایل پروژه، فایل را دانلود و جایگزین data.json کنید.</div>
+        <div class="name" style="font-size:15px">اطلاعات آنلاین ذخیره می‌شود</div>
+        <div class="hint muted" style="font-size:13px">همهٔ دستگاه‌ها اطلاعات یکسان می‌بینند. هر از گاهی یک نسخهٔ پشتیبان دانلود کنید.</div>
       </div>
       <div class="row" style="flex-wrap:wrap">
-        <button class="btn btn-primary" data-action="export">${icon('check')}دانلود data.json</button>
-        <label class="btn">${icon('plus')}بارگذاری فایل<input type="file" accept=".json,application/json" id="importFile" hidden></label>
+        <button class="btn btn-primary" data-action="export">${icon('check')}دانلود پشتیبان</button>
+        <label class="btn">${icon('plus')}بازیابی از فایل<input type="file" accept=".json,application/json" id="importFile" hidden></label>
       </div>
     </div>`;
 }
@@ -937,7 +947,7 @@ document.addEventListener('click', async (ev) => {
       else openLogin();
       return;
     case 'logout':
-      state.isAdmin = false; store.set('hd_admin', null); state.admin = null; location.hash = '#/';
+      setPassword(null); state.admin = null; location.hash = '#/';
       toast('از پنل مدیریت خارج شدید');
       return;
     case 'pick-barber':
@@ -1005,8 +1015,11 @@ document.addEventListener('submit', async (ev) => {
 
 document.addEventListener('change', async (ev) => {
   if (ev.target.id !== 'importFile' || !ev.target.files[0]) return;
+  const file = ev.target.files[0];
+  ev.target.value = '';
+  if (!(await confirmDialog('بازیابی از فایل', 'همهٔ اطلاعات فعلی با محتوای این فایل جایگزین می‌شود. ادامه می‌دهید؟', 'جایگزینی'))) return;
   try {
-    await importData(ev.target.files[0]);
+    await importData(file);
     toast('داده‌ها بارگذاری شد');
     renderAdmin();
   } catch (err) { toast(err.message, true); }
