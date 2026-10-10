@@ -1746,6 +1746,14 @@
                 color: var(--muted);
             }
 
+            .print-head a {
+                text-decoration: none;
+            }
+
+            html[lang="fa"] .print-head p[dir="ltr"] {
+                text-align: right;
+            }
+
             .card {
                 backdrop-filter: none;
                 box-shadow: none;
@@ -1964,7 +1972,8 @@
             <div class="print-only print-head">
                 <h1 data-i18n="name"></h1>
                 <p data-i18n="printRole"></p>
-                <p dir="ltr">+98 915 222 3964 · +98 939 951 5814 · moh3niziy@gmail.com · github.com/Moh3niziy</p>
+                <p dir="ltr">+98 915 222 3964 · +98 939 951 5814 · <a href="mailto:moh3niziy@gmail.com">moh3niziy@gmail.com</a></p>
+                <p dir="ltr"><a href="https://moh3niziy.ir">moh3niziy.ir</a> · <a href="https://github.com/Moh3niziy">github.com/Moh3niziy</a></p>
             </div>
 
             <div class="resume-head reveal">
