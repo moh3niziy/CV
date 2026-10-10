@@ -19,4 +19,4 @@ Plain HTML, CSS and JavaScript in a single file (`index.html`). There's no frame
 
 - Email: moh3niziy@gmail.com
 - Telegram: [@Moh3niziy](https://t.me/Moh3niziy)
-- LinkedIn: [Moh3niziy](https://www.linkedin.com/in/Moh3niziy)
+- LinkedIn: [Moh3niziy](https://www.linkedin.com/in/mohsen-iziy-11aa2a280)
