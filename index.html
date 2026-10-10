@@ -1775,8 +1775,17 @@
                 break-after: avoid;
             }
 
-            .pj-icon {
-                box-shadow: inset 0 0 0 1px var(--border-strong) !important;
+            /* Blurred shadows turn into solid boxes in some PDF viewers */
+            *,
+            *::before,
+            *::after {
+                box-shadow: none !important;
+                text-shadow: none !important;
+                filter: none !important;
+            }
+
+            .pj-logo {
+                border: 1px solid var(--border-strong);
             }
 
             .project {
