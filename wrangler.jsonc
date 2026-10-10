@@ -10,8 +10,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "DATABASE_NAME",
-      "database_id": "DATABASE_ID"
+      "database_name": "hairdresser-db",
+      "database_id": "9056ff39-043b-4252-8f00-5e2a8847fb00"
     }
   ],
   "vars": {
