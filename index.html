@@ -940,6 +940,10 @@
             color: var(--sky);
         }
 
+        html[lang="fa"] .kicker {
+            font-family: var(--font);
+        }
+
         .resume-head h2 {
             font-family: var(--font-display);
             font-size: clamp(1.8rem, 4.5vw, 2.4rem);
@@ -965,6 +969,7 @@
             font: inherit;
             font-weight: 600;
             font-size: .9rem;
+            text-decoration: none;
             cursor: pointer;
             overflow: hidden;
             box-shadow: 0 10px 30px -8px rgba(99, 102, 241, .6);
@@ -1279,9 +1284,15 @@
 
         .pj-top {
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            gap: 14px;
             margin-bottom: 4px;
+        }
+
+        .pj-title {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
         }
 
         .pj-icon {
@@ -1295,6 +1306,31 @@
             background: linear-gradient(135deg, var(--c1), var(--c2));
             box-shadow: 0 10px 26px -8px var(--c2);
             transition: transform .4s var(--ease);
+        }
+
+        .pj-icon.pj-logo {
+            flex: none;
+            width: 56px;
+            height: 56px;
+            padding: 7px;
+            background: #fff;
+            box-shadow: 0 8px 22px -10px var(--c2), inset 0 0 0 1px rgba(0, 0, 0, .06);
+            overflow: hidden;
+        }
+
+        .pj-icon.pj-logo.full {
+            padding: 0;
+        }
+
+        .pj-logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+
+        .pj-logo.full img {
+            object-fit: cover;
         }
 
         .project:hover .pj-icon {
@@ -1314,6 +1350,7 @@
         .project h3 {
             font-family: var(--font-display);
             font-size: 1.18rem;
+            line-height: 1.3;
         }
 
         .project p {
@@ -1729,6 +1766,37 @@
                 transform: none !important;
             }
 
+            * {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            .sec-head {
+                break-after: avoid;
+            }
+
+            .pj-icon {
+                box-shadow: inset 0 0 0 1px var(--border-strong) !important;
+            }
+
+            .project {
+                transform: none !important;
+            }
+
+            .stat b {
+                background: none;
+                color: var(--blue);
+            }
+
+            .meter span {
+                background: var(--surface-2);
+                animation: none !important;
+            }
+
+            .meter span.on {
+                background: var(--grad);
+            }
+
             .btn-primary::after,
             .summary-card .deco {
                 display: none;
@@ -1773,7 +1841,7 @@
                     <span class="orb o4"><i class="fa-brands fa-apple"></i></span>
                 </div>
                 <div class="ring"></div>
-                <img src="profile.jpg" alt="Mohsen Iziy" id="avatarImg"
+                <img src="assets/images/profile.jpg" alt="Mohsen Iziy" id="avatarImg"
                     onerror="this.src='https://ui-avatars.com/api/?name=Mohsen+Iziy&background=6366f1&color=fff&size=256'" />
             </div>
 
@@ -1896,9 +1964,9 @@
                     <h2 data-i18n="resumeTitle"></h2>
                     <p data-i18n="resumeSub"></p>
                 </div>
-                <button class="btn-primary no-print" type="button" id="printBtn">
+                <a class="btn-primary no-print" id="pdfBtn" href="Mohsen-Iziy-Resume-EN.pdf" download>
                     <i class="fa-solid fa-file-arrow-down"></i><span data-i18n="pdf"></span>
-                </button>
+                </a>
             </div>
 
             <article class="card summary-card reveal" style="--delay:.08s">
@@ -1985,9 +2053,9 @@
                     resumeTitle: 'My Resume',
                     resumeSub: 'Flutter & Dart mobile developer — Android · iOS · Web',
                     printRole: 'Mobile Developer — Flutter & Dart',
-                    pdf: 'Save as PDF',
+                    pdf: 'Download PDF',
                     summaryTitle: 'About me',
-                    summary: 'Mobile developer with <strong>3 years</strong> of successful experience delivering high-quality projects for Iranian and international companies. I design and build professional <strong>cross-platform apps (Android, iOS, Web)</strong> with Dart and Flutter. Key projects include the advanced AI chatbots <strong>Dana, Findora and Doktorify</strong>, along with hands-on experience taking apps through the full App Store release process and familiarity with Google Play publishing.',
+                    summary: 'Mobile developer with <strong>3 years</strong> of successful experience delivering high-quality projects for Iranian and international companies. I design and build professional <strong>cross-platform apps (Android, iOS, Web)</strong> with Dart and Flutter. Key projects include the advanced AI chatbots <strong>Dana, Findora and Doktorify</strong>, along with hands-on experience taking apps through the full App Store and Google Play release process.',
                     statYears: 'Years of experience',
                     statProjects: 'Projects shipped',
                     statPlatforms: 'Target platforms',
@@ -2030,7 +2098,7 @@
                     printRole: 'توسعه‌دهنده موبایل — Flutter و Dart',
                     pdf: 'دریافت PDF',
                     summaryTitle: 'درباره من',
-                    summary: 'توسعه‌دهنده موبایل با <strong>۳ سال تجربه موفق</strong> و پروژه‌های باکیفیت در شرکت‌های ایرانی و بین‌المللی. با تجربه در طراحی و پیاده‌سازی اپلیکیشن‌های حرفه‌ای <strong>کراس‌پلتفرم (Android، iOS، Web)</strong> با زبان Dart و فریم‌ورک Flutter. از پروژه‌های کلیدی من می‌توان به طراحی و توسعه چت‌بات‌های پیشرفته هوش مصنوعی <strong>Dana، Findora و Doktorify</strong> به همراه تجربه کامل در فرآیند انتشار اپ در اپ‌استور و آشنایی با انتشار اپ در گوگل‌پلی اشاره کرد.',
+                    summary: 'توسعه‌دهنده موبایل با <strong>۳ سال تجربه موفق</strong> و پروژه‌های باکیفیت در شرکت‌های ایرانی و بین‌المللی. با تجربه در طراحی و پیاده‌سازی اپلیکیشن‌های حرفه‌ای <strong>کراس‌پلتفرم (Android، iOS، Web)</strong> با زبان Dart و فریم‌ورک Flutter. از پروژه‌های کلیدی من می‌توان به طراحی و توسعه چت‌بات‌های پیشرفته هوش مصنوعی <strong>Dana، Findora و Doktorify</strong> به همراه تجربه کامل در فرآیند انتشار اپ در اپ‌استور و گوگل‌پلی اشاره کرد.',
                     statYears: 'سال تجربه',
                     statProjects: 'پروژه منتشرشده',
                     statPlatforms: 'پلتفرم هدف',
@@ -2106,35 +2174,35 @@
 
             const PROJECTS = [
                 {
-                    name: { en: 'Dana AI', fa: 'Dana AI' }, icon: 'fa-brain', c1: '#a78bfa', c2: '#ec4899', year: { en: '2025', fa: '۱۴۰۴' },
+                    name: { en: 'Dana AI', fa: 'Dana AI' }, icon: 'fa-brain', logo: 'assets/projects/dana-ai/icon.png', full: true, c1: '#a78bfa', c2: '#ec4899', year: { en: '2025', fa: '۱۴۰۴' },
                     en: { desc: 'An AI-powered therapy platform where users can talk about their feelings, thoughts or anything on their mind and receive guidance based on psychology principles and different therapeutic techniques.', tags: ['AI', 'Mental health', 'Chatbot'] },
                     fa: { desc: 'دانا یک پلتفرم روان‌درمانگر مبتنی بر هوش مصنوعی است که کاربر می‌تواند درباره احساسات، افکار یا هر موضوعی که در ذهن دارد صحبت کند و راهکارهایی بر اساس اصول روانشناسی و تکنیک‌های درمانی مختلف دریافت کند.', tags: ['هوش مصنوعی', 'سلامت روان', 'چت‌بات'] }
                 },
                 {
-                    name: { en: 'Findora AI', fa: 'Findora AI' }, icon: 'fa-magnifying-glass-chart', c1: '#22d3ee', c2: '#3b82f6', year: { en: '2025', fa: '۱۴۰۴' },
+                    name: { en: 'Findora AI', fa: 'Findora AI' }, icon: 'fa-magnifying-glass-chart', logo: 'assets/projects/findora-ai/icon.png', c1: '#22d3ee', c2: '#3b82f6', year: { en: '2025', fa: '۱۴۰۴' },
                     en: { desc: 'A helpful search assistant that finds information across the web, videos, scientific papers and medical sources — and fact-checks it so answers stay accurate and trustworthy.', tags: ['AI search', 'Fact-checking', 'App Store'] },
                     fa: { desc: 'یک دستیار جستجوی هوشمند برای یافتن اطلاعات و پاسخ به سوالات؛ در اینترنت، ویدیوها، مقالات علمی و منابع پزشکی جستجو می‌کند و اطلاعات را راستی‌آزمایی می‌کند تا از صحت و اعتبار آن‌ها اطمینان حاصل شود.', tags: ['جستجوی هوشمند', 'راستی‌آزمایی', 'اپ‌استور'] }
                 },
                 {
-                    name: { en: 'Doktorify AI', fa: 'Doktorify AI' }, icon: 'fa-stethoscope', c1: '#34d399', c2: '#0ea5e9', year: { en: '2025', fa: '۱۴۰۳' },
+                    name: { en: 'Doktorify AI', fa: 'Doktorify AI' }, icon: 'fa-stethoscope', logo: 'assets/projects/doktorify-ai/icon.png', c1: '#34d399', c2: '#0ea5e9', year: { en: '2025', fa: '۱۴۰۳' },
                     en: { desc: 'An innovative AI-driven healthcare platform that makes access to healthcare simple. Translated and developed in Turkish and English.', tags: ['Healthcare', 'Turkish & English', 'Android · iOS'] },
                     fa: { desc: 'دکتریفای یک پلتفرم نوآورانه مراقبت‌های بهداشتی مبتنی بر هوش مصنوعی است که دسترسی به مراقبت‌های بهداشتی را ساده می‌کند. این اپلیکیشن با دو زبان ترکی و انگلیسی ترجمه و توسعه یافته است.', tags: ['سلامت', 'ترکی و انگلیسی', 'Android · iOS'] },
                     request: true
                 },
                 {
-                    name: { en: 'My Notes', fa: 'یادداشت من' }, icon: 'fa-note-sticky', c1: '#fbbf24', c2: '#f97316', year: { en: '2024', fa: '۱۴۰۳' },
+                    name: { en: 'My Notes', fa: 'یادداشت من' }, icon: 'fa-note-sticky', logo: 'assets/projects/my-notes/icon.png', c1: '#fbbf24', c2: '#f97316', year: { en: '2024', fa: '۱۴۰۳' },
                     en: { desc: 'A practical everyday tool with a versatile user interface and a history feature.', tags: ['Productivity', 'Cafe Bazaar'] },
                     fa: { desc: 'یک ابزار کاربردی با رابط کاربری متنوع برای کارهای روزمره با قابلیت تاریخچه.', tags: ['کاربردی', 'کافه‌بازار'] },
                     link: 'https://cafebazaar.ir/app/com.moh3n.yad_dasht'
                 },
                 {
-                    name: { en: 'Chess Clock', fa: 'ساعت شطرنج' }, icon: 'fa-chess-knight', c1: '#94a3b8', c2: '#475569', year: { en: '2024', fa: '۱۴۰۳' },
+                    name: { en: 'Chess Clock', fa: 'ساعت شطرنج' }, icon: 'fa-chess-knight', logo: 'assets/projects/chess-clock/icon.png', c1: '#94a3b8', c2: '#475569', year: { en: '2024', fa: '۱۴۰۳' },
                     en: { desc: 'A chess clock designed and built for people who love playing chess.', tags: ['Utility', 'Cafe Bazaar'] },
                     fa: { desc: 'ساعت شطرنج برای دوستداران بازی شطرنج طراحی و توسعه یافته است.', tags: ['سرگرمی', 'کافه‌بازار'] },
                     link: 'https://cafebazaar.ir/app/com.example.chess_clock'
                 },
                 {
-                    name: { en: 'Alpha AI', fa: 'Alpha AI' }, icon: 'fa-language', c1: '#f472b6', c2: '#8b5cf6', year: { en: '2024', fa: '۱۴۰۲' },
+                    name: { en: 'Alpha AI', fa: 'Alpha AI' }, icon: 'fa-language', logo: 'assets/projects/alpha-ai/icon.png', c1: '#f472b6', c2: '#8b5cf6', year: { en: '2024', fa: '۱۴۰۲' },
                     en: { desc: 'An AI-powered learning platform that helps Persian speakers learn English from beginner to advanced level — easier and more efficiently.', tags: ['EdTech', 'AI', 'Language learning'] },
                     fa: { desc: 'آلفا یک پلتفرم آموزشی مبتنی بر هوش مصنوعی برای فارسی‌زبانان علاقه‌مند به یادگیری زبان انگلیسی از سطح پایه تا پیشرفته است که یادگیری را آسان و بهینه می‌کند.', tags: ['آموزش', 'هوش مصنوعی', 'یادگیری زبان'] }
                 }
@@ -2271,10 +2339,14 @@
                     <div class="reveal" style="--delay:${(i % 2) * .1}s">
                         <article class="card project tilt" style="--c1:${p.c1};--c2:${p.c2}">
                             <div class="pj-top">
-                                <span class="pj-icon"><i class="fa-solid ${p.icon}"></i></span>
-                                <span class="pj-year">${p.year[lang]}</span>
+                                ${p.logo
+                                    ? `<span class="pj-icon pj-logo${p.full ? ' full' : ''}"><img src="${p.logo}" alt="" loading="lazy"></span>`
+                                    : `<span class="pj-icon"><i class="fa-solid ${p.icon}"></i></span>`}
+                                <div class="pj-title">
+                                    <h3>${esc(p.name[lang])}</h3>
+                                    <span class="pj-year">${p.year[lang]}</span>
+                                </div>
                             </div>
-                            <h3>${esc(p.name[lang])}</h3>
                             <p>${esc(d.desc)}</p>
                             <div class="tags">${d.tags.map(g => `<span class="tag">${esc(g)}</span>`).join('')}</div>
                             ${foot}
@@ -2312,6 +2384,7 @@
                 $$('[data-i18n-aria]').forEach(el => el.setAttribute('aria-label', t(el.dataset.i18nAria)));
                 $$('[data-no]').forEach(el => el.textContent = num('0' + el.dataset.no));
                 $('#avatarImg').alt = t('name');
+                $('#pdfBtn').href = `Mohsen-Iziy-Resume-${lang.toUpperCase()}.pdf`;
             }
 
             function render() {
@@ -2532,14 +2605,13 @@
 
             $('#langToggle').addEventListener('click', () => setLang(lang === 'en' ? 'fa' : 'en', true));
 
-            $('#printBtn').addEventListener('click', () => window.print());
             addEventListener('beforeprint', () => {
                 $$('[data-count]').forEach(el => el.textContent = num(el.dataset.count) + (el.dataset.plus ? '+' : ''));
                 $$('.reveal, .reveal-line').forEach(el => el.classList.add('in'));
             });
 
             /* ───────── Boot ───────── */
-            const saved = store.get('cv-lang');
+            const saved = new URLSearchParams(location.search).get('lang') || store.get('cv-lang');
             setLang(saved === 'fa' ? 'fa' : 'en', false);
             if (location.hash === '#resume') showTab('resume');
             typeCode();

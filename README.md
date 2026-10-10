@@ -9,7 +9,7 @@ This is my personal CV website. I'm a mobile developer building cross-platform a
 - **Profile:** photo, contact details and social links
 - **Resume:** summary, work experience, projects, skills, education and languages
 - **English and Persian:** switch with the button at the top (Persian is shown right-to-left)
-- **PDF export:** the "Save as PDF" button prints a clean copy of the resume
+- **PDF download:** the "Download PDF" button downloads a ready-made PDF of the resume in the current language. After editing the resume, run `./build-pdf.sh` to regenerate the PDFs (needs Google Chrome)
 
 ## Built with
 
