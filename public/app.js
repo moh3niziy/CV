@@ -27,6 +27,8 @@ const ICONS = {
   pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
+  instagram: '<rect x="2.5" y="2.5" width="19" height="19" rx="5.5"/><circle cx="12" cy="12" r="4.2"/><path d="M17.5 6.5h.01"/>',
+  telegram: '<path d="M21.5 4.5 2.8 11.7c-.9.4-.9 1.6.1 1.9l4.6 1.4 1.8 5.6c.3.8 1.3 1 1.9.4l2.6-2.5 4.8 3.5c.7.5 1.7.1 1.9-.7l3.1-15.3c.2-1-.8-1.8-1.6-1.5zM9 15l8.5-7.5"/>',
   power: '<path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>',
   map: '<path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4zM8 2v16M16 6v16"/>',
 };
@@ -107,7 +109,7 @@ const state = {
   tab: 'schedule',
 };
 
-class AppError extends Error {}
+class AppError extends Error { }
 
 function readStoredAuth() {
   try { return JSON.parse(store.get('hd_auth')) || null; } catch { return null; }
@@ -456,6 +458,29 @@ function credFieldsHTML(prefix, username, passRequired, title) {
     </div>`;
 }
 
+/* ================================================================ social pages */
+function socialHTML(shop) {
+  const links = [];
+  if (shop?.instagram) links.push(`<a class="social ig" href="https://instagram.com/${encodeURIComponent(shop.instagram)}" target="_blank" rel="noopener">${icon('instagram')}<span>اینستاگرام</span></a>`);
+  if (shop?.telegram) links.push(`<a class="social tg" href="https://t.me/${encodeURIComponent(shop.telegram)}" target="_blank" rel="noopener">${icon('telegram')}<span>تلگرام</span></a>`);
+  return links.length ? `<div class="socials">${links.join('')}</div>` : '';
+}
+
+function socialFieldsHTML(prefix, shop) {
+  return `
+    <div class="row cred-row">
+      <div class="field">
+        <label for="${prefix}Ig">${icon('instagram')} اینستاگرام <span class="muted" style="font-weight:400">(اختیاری)</span></label>
+        <input class="input ltr-input" id="${prefix}Ig" value="${esc(shop?.instagram ? '@' + shop.instagram : '')}" maxlength="100" autocapitalize="none" spellcheck="false" placeholder="@page_id">
+      </div>
+      <div class="field">
+        <label for="${prefix}Tg">${icon('telegram')} تلگرام <span class="muted" style="font-weight:400">(اختیاری)</span></label>
+        <input class="input ltr-input" id="${prefix}Tg" value="${esc(shop?.telegram ? '@' + shop.telegram : '')}" maxlength="100" autocapitalize="none" spellcheck="false" placeholder="@channel_id">
+      </div>
+    </div>
+    <span class="hint" style="display:block;margin:-8px 0 16px">آیدی یا لینک صفحه را وارد کنید.</span>`;
+}
+
 /* ================================================================ home (shops) */
 function renderHome() {
   renderTopbar('home');
@@ -513,8 +538,11 @@ function renderHome() {
 async function openShopModal(shop) {
   let owner = '';
   if (shop) {
-    try { owner = (await api('GET', `/admin/shops/${encodeURIComponent(shop.id)}/data`)).accounts?.owner || ''; }
-    catch (err) { toast(err.message, true); return; }
+    try {
+      const full = await api('GET', `/admin/shops/${encodeURIComponent(shop.id)}/data`);
+      owner = full.accounts?.owner || '';
+      shop = { ...shop, ...full.shop };
+    } catch (err) { toast(err.message, true); return; }
   }
   openModal(`
     <div class="modal sm" role="dialog" aria-modal="true">
@@ -532,6 +560,7 @@ async function openShopModal(shop) {
           <textarea class="input" id="sLoc" required maxlength="300" rows="3" placeholder="آدرس، یا لینک لوکیشن از گوگل‌مپ / نشان / بلد">${esc(shop?.location || '')}</textarea>
           <span class="hint">آدرس متنی یا لینک نقشه؛ برای مشتری‌ها با دکمهٔ «نمایش روی نقشه» نشان داده می‌شود.</span>
         </div>
+        ${socialFieldsHTML('s', shop)}
         ${credFieldsHTML('o', owner, !shop || !owner, 'حساب مالک آرایشگاه')}
       </form>
       <div class="modal-foot">
@@ -544,6 +573,7 @@ async function openShopModal(shop) {
   save.addEventListener('click', async () => {
     const payload = {
       name: $('#sName').value.trim(), location: $('#sLoc').value.trim(),
+      instagram: $('#sIg').value.trim(), telegram: $('#sTg').value.trim(),
       ownerUsername: toEn($('#oUser').value).toLowerCase(), ownerPassword: toEn($('#oPass').value),
     };
     if (!payload.name) { $('#sName').focus(); toast('نام آرایشگاه را وارد کنید', true); return; }
@@ -579,7 +609,7 @@ function renderUser() {
 
   if (!barbers.length) {
     $('#app').innerHTML = `<div class="page">
-      <section class="hero"><h1>${esc(state.shop.name)}</h1>${locationHTML(state.shop.location)}</section>
+      <section class="hero"><h1>${esc(state.shop.name)}</h1>${locationHTML(state.shop.location)}${socialHTML(state.shop)}</section>
       <div class="card" style="margin-top:20px">${emptyHTML('scissors', 'هنوز آرایشگری ثبت نشده', 'به‌زودی زمان‌های خالی اینجا نمایش داده می‌شود.')}</div></div>`;
     return;
   }
@@ -606,6 +636,7 @@ function renderUser() {
     <section class="hero">
       <h1>${esc(state.shop.name)}</h1>
       ${locationHTML(state.shop.location)}
+      ${socialHTML(state.shop)}
       <p>آرایشگر و روز دلخواه را انتخاب کنید و برای رزرو نوبت تماس بگیرید.</p>
     </section>
 
@@ -711,7 +742,7 @@ function renderAdmin() {
   const tabs = `
     <div class="seg" role="tablist">
       <button class="${state.tab === 'schedule' ? 'active' : ''}" data-action="tab" data-tab="schedule">${icon('calendar')}نوبت‌ها</button>
-      <button class="${state.tab === 'barbers' ? 'active' : ''}" data-action="tab" data-tab="barbers">${icon('users')}آرایشگرها</button>
+      <button class="${state.tab === 'barbers' ? 'active' : ''}" data-action="tab" data-tab="barbers">${icon('users')}اطلاعات آرایشگاه</button>
     </div>`;
 
   if (!canManage()) state.tab = 'schedule';
@@ -749,7 +780,8 @@ function adminScheduleHTML() {
   // ترکیب نوبت‌ها و بازه‌های خالی به ترتیب زمان
   const items = [
     ...plan.list.map((a) => ({ t: toMin(a.start), html: apptHTML(a, plan, isToday && toMin(a.end) <= now || state.date < todayISO()) })),
-    ...plan.gaps.map(([s, e]) => ({ t: s, html: locked ? `
+    ...plan.gaps.map(([s, e]) => ({
+      t: s, html: locked ? `
       <div class="gap locked">
         <span class="g-info">${icon('clock')} ${faTime(s)} تا ${faTime(e)} <small>${fmtDur(e - s)} خالی</small></span>
       </div>` : `
@@ -863,6 +895,7 @@ function adminBarbersHTML() {
         <label for="locInput">لوکیشن</label>
         <textarea class="input" id="locInput" rows="2" maxlength="300" required placeholder="آدرس یا لینک نقشه">${esc(state.shop.location)}</textarea>
       </div>
+      ${socialFieldsHTML('own', state.shop)}
       ${credFieldsHTML('own', state.accounts?.owner || '', !state.accounts?.owner, 'حساب مالک')}
       <button class="btn btn-primary">${icon('check')}ذخیره</button>
     </form>
@@ -1081,13 +1114,13 @@ function openBarberModal(barber) {
           </div>
           <div class="hours-table">
             ${WEEK.map(([k, label]) => {
-              const h = b.hours[k] || { on: false, start: '10:00', end: '20:00' };
-              return `<div class="hours-row ${h.on ? '' : 'off'}" data-day="${k}">
+    const h = b.hours[k] || { on: false, start: '10:00', end: '20:00' };
+    return `<div class="hours-row ${h.on ? '' : 'off'}" data-day="${k}">
                 <label class="switch"><input type="checkbox" ${h.on ? 'checked' : ''}><span></span></label>
                 <span class="dname">${label}</span>
                 ${timePickHTML('s' + k, h.start)}<span class="sep">تا</span>${timePickHTML('e' + k, h.end)}
               </div>`;
-            }).join('')}
+  }).join('')}
           </div>
         </div>
 
@@ -1316,13 +1349,16 @@ document.addEventListener('submit', async (ev) => {
     const ownerUsername = toEn($('#ownUser').value).toLowerCase();
     const ownerPassword = toEn($('#ownPass').value);
     const res = await api('PUT', `/admin/shops/${encodeURIComponent(state.shopId)}`,
-      { name: $('#shopInput').value.trim(), location: $('#locInput').value.trim(), ownerUsername, ownerPassword });
+      {
+        name: $('#shopInput').value.trim(), location: $('#locInput').value.trim(),
+        instagram: $('#ownIg').value.trim(), telegram: $('#ownTg').value.trim(), ownerUsername, ownerPassword
+      });
     // اگر مالک اطلاعات ورود خودش را عوض کرد، با اطلاعات جدید دوباره وارد می‌شود
     if (state.auth?.role === 'owner' && (ownerPassword || ownerUsername !== state.accounts?.owner)) {
       if (ownerPassword) setAuth(await api('POST', `/shops/${encodeURIComponent(state.shopId)}/login`, { username: ownerUsername, password: ownerPassword }));
       else { setAuth(null); toast('نام کاربری تغییر کرد؛ دوباره وارد شوید'); location.hash = `#/s/${encodeURIComponent(state.shopId)}`; return; }
     }
-    state.shop = { id: res.id, name: res.name, location: res.location };
+    state.shop = { ...state.shop, ...res };
     await loadAdmin();
     toast('اطلاعات آرایشگاه ذخیره شد');
     renderAdmin();

@@ -75,10 +75,13 @@ async function migrate(db) {
     db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('secret', ?)").bind(randomHex(32)),
   ]);
   secret = (await db.prepare("SELECT value FROM meta WHERE key = 'secret'").first()).value;
-  try {
-    await db.prepare('ALTER TABLE shops ADD COLUMN active INTEGER NOT NULL DEFAULT 1').run();
-  } catch (err) {
-    if (!/duplicate column/i.test(String(err && err.message))) throw err;
+  // ستون‌هایی که بعداً اضافه شده‌اند
+  for (const col of ['active INTEGER NOT NULL DEFAULT 1', "telegram TEXT NOT NULL DEFAULT ''", "instagram TEXT NOT NULL DEFAULT ''"]) {
+    try {
+      await db.prepare(`ALTER TABLE shops ADD COLUMN ${col}`).run();
+    } catch (err) {
+      if (!/duplicate column/i.test(String(err && err.message))) throw err;
+    }
   }
 
   // داده‌های نسخهٔ تک‌آرایشگاهی قبلی به اولین آرایشگاه منتقل می‌شود
@@ -163,14 +166,32 @@ function cleanShop(body) {
   if (!location) throw new HttpError(400, 'لوکیشن آرایشگاه را وارد کنید');
   if (name.length > 60) throw new HttpError(400, 'نام آرایشگاه طولانی است');
   if (location.length > 300) throw new HttpError(400, 'لوکیشن طولانی است');
-  return { name, location };
+  return {
+    name, location,
+    telegram: cleanSocial(body?.telegram, /(?:t\.me|telegram\.me)\/([^/?#]+)/i, /^[a-z0-9_]{4,32}$/i, 'آیدی تلگرام'),
+    instagram: cleanSocial(body?.instagram, /instagram\.com\/([^/?#]+)/i, /^[a-z0-9._]{1,30}$/i, 'آیدی اینستاگرام'),
+  };
+}
+
+// صفحات مجازی اختیاری‌اند؛ آیدی یا لینک کامل پذیرفته و فقط آیدی ذخیره می‌شود
+function cleanSocial(value, urlRe, idRe, label) {
+  let v = String(value || '').trim();
+  if (!v) return '';
+  const m = v.match(urlRe);
+  if (m) v = m[1];
+  v = v.replace(/^@/, '');
+  if (!idRe.test(v)) throw new HttpError(400, `${label} معتبر نیست`);
+  return v;
 }
 
 async function getShop(db, id) {
-  const row = await db.prepare('SELECT id, name, location, data, version, active FROM shops WHERE id = ?').bind(id).first();
+  const row = await db.prepare('SELECT id, name, location, telegram, instagram, data, version, active FROM shops WHERE id = ?').bind(id).first();
   if (!row) throw new HttpError(404, 'آرایشگاه پیدا نشد');
   return {
-    shop: { id: row.id, name: row.name, location: row.location, active: !!row.active },
+    shop: {
+      id: row.id, name: row.name, location: row.location, active: !!row.active,
+      telegram: row.telegram || '', instagram: row.instagram || '',
+    },
     data: JSON.parse(row.data), version: row.version,
   };
 }
@@ -287,27 +308,30 @@ async function handleApi(request, env, path) {
     requireAuth(auth);
     if (auth.r !== 'super') throw new HttpError(403, 'فقط مدیر سایت می‌تواند آرایشگاه اضافه کند');
     const body = await readJson(request);
-    const { name, location } = cleanShop(body);
-    const shop = { id: newId(), name, location };
+    const shop = { id: newId(), ...cleanShop(body) };
     const ownerOps = await setOwner(db, shop.id, body.ownerUsername, body.ownerPassword, true);
     await db.batch([
-      db.prepare('INSERT INTO shops (id, name, location, data, version, created_at) VALUES (?, ?, ?, ?, 1, ?)')
-        .bind(shop.id, name, location, JSON.stringify(EMPTY), Date.now()),
+      db.prepare('INSERT INTO shops (id, name, location, telegram, instagram, data, version, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)')
+        .bind(shop.id, shop.name, shop.location, shop.telegram, shop.instagram, JSON.stringify(EMPTY), Date.now()),
       ...ownerOps,
     ]);
     return json(shop);
   }
 
   if (id && parts.length === 3) {
-    // ویرایش نام، لوکیشن و اطلاعات ورود مالک (مدیر سایت یا خود مالک)
+    // ویرایش نام، لوکیشن، صفحات مجازی و اطلاعات ورود مالک (مدیر سایت یا خود مالک)
     if (method === 'PUT') {
       requireShop(auth, id, ['owner']);
       const body = await readJson(request);
-      const { name, location } = cleanShop(body);
+      const info = cleanShop(body);
       await getShop(db, id);
       const ownerOps = await setOwner(db, id, body.ownerUsername, body.ownerPassword, false);
-      await db.batch([db.prepare('UPDATE shops SET name = ?, location = ? WHERE id = ?').bind(name, location, id), ...ownerOps]);
-      return json({ id, name, location, owner: (await shopAccounts(db, id)).owner });
+      await db.batch([
+        db.prepare('UPDATE shops SET name = ?, location = ?, telegram = ?, instagram = ? WHERE id = ?')
+          .bind(info.name, info.location, info.telegram, info.instagram, id),
+        ...ownerOps,
+      ]);
+      return json({ id, ...info, owner: (await shopAccounts(db, id)).owner });
     }
     // حذف آرایشگاه (فقط مدیر سایت)
     if (method === 'DELETE') {
