@@ -346,15 +346,13 @@ function renderTopbar(view) {
     : view === 'admin' ? `پنل مدیریت · ${shopName}` : `نوبت‌های خالی · ${shopName}`;
   const dark = document.documentElement.dataset.theme === 'dark';
   const themeBtn = `<button class="btn icon-btn" data-action="theme" title="${dark ? 'تم روشن' : 'تم تیره'}" aria-label="تغییر تم">${icon(dark ? 'sun' : 'moon')}</button>`;
-  const homeBtn = `<a class="btn icon-btn" href="#/" title="همهٔ آرایشگاه‌ها" aria-label="همهٔ آرایشگاه‌ها">${icon('home')}</a>`;
   const logoutBtn = `<button class="btn btn-ghost icon-btn" data-action="logout" title="خروج">${icon('logout')}</button>`;
-  const adminBtn = `<button class="btn btn-primary" data-action="admin">${icon('lock')}<span>ادمین</span></button>`;
+  // ورود به پنل دکمه ندارد: آیکون قیچی را ۲ ثانیه نگه دارید
   let actions;
   const who = state.auth ? `<span class="who">${icon('user')}<span>${esc(state.auth.name || '')}</span></span>` : '';
-  const loginBtn = `<button class="btn btn-primary" data-action="admin">${icon('lock')}<span>${canEnterShop(state.shopId) ? 'پنل' : 'ورود'}</span></button>`;
-  if (view === 'home') actions = `${themeBtn}${isSuper() ? `${who}${logoutBtn}` : adminBtn}`;
-  else if (view === 'admin') actions = `${who}${themeBtn}${homeBtn}<a class="btn" href="${shopHref}" title="نمای مشتری">${icon('eye')}<span class="btn-label-sm">نمای مشتری</span></a>${logoutBtn}`;
-  else actions = `${themeBtn}${homeBtn}${loginBtn}`;
+  if (view === 'home') actions = `${themeBtn}${isSuper() ? `${who}${logoutBtn}` : ''}`;
+  else if (view === 'admin') actions = `${who}${themeBtn}<a class="btn" href="${shopHref}" title="نمای مشتری">${icon('eye')}<span class="btn-label-sm">نمای مشتری</span></a>${logoutBtn}`;
+  else actions = themeBtn;
   $('#topActions').innerHTML = actions;
 }
 
@@ -394,8 +392,8 @@ function renderHome() {
   let body;
   if (!shops.length) {
     body = `<div class="card">${emptyHTML('store', 'هنوز آرایشگاهی ثبت نشده',
-      isSuper() ? 'اولین آرایشگاه را با نام، لوکیشن و حساب مالک ثبت کنید.' : 'برای افزودن آرایشگاه به‌عنوان مدیر سایت وارد شوید.',
-      isSuper() ? addBtn : `<button class="btn btn-primary" data-action="admin">${icon('lock')}ورود مدیر</button>`)}</div>`;
+      isSuper() ? 'اولین آرایشگاه را با نام، لوکیشن و حساب مالک ثبت کنید.' : 'به‌زودی آرایشگاه‌ها اینجا نمایش داده می‌شوند.',
+      isSuper() ? addBtn : '')}</div>`;
   } else {
     body = `
       ${shops.length > 3 ? `<div class="search">${icon('search')}<input class="input" id="shopSearch" placeholder="جستجوی نام یا محله…" autocomplete="off"></div>` : ''}
@@ -1142,13 +1140,8 @@ document.addEventListener('click', async (ev) => {
   switch (action) {
     case 'theme': return toggleTheme();
     case 'close': return closeModal();
-    case 'admin': {
-      const next = route().view === 'home' ? '#/' : `#/s/${encodeURIComponent(state.shopId)}/admin`;
-      const allowed = route().view === 'home' ? isSuper() : canEnterShop(state.shopId);
-      if (allowed) { if (location.hash !== next) location.hash = next; else render(); }
-      else openLogin(next);
-      return;
-    }
+    case 'admin':
+      return goAdmin();
     case 'logout': {
       setAuth(null); state.admin = null; state.role = null; state.accounts = null;
       const r = route();
@@ -1273,6 +1266,40 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && ev.target.matches?.('.shop-card')) ev.target.click();
 });
 
+/* ================================================================ hidden admin entry */
+// نگه داشتن آیکون قیچی به مدت ۲ ثانیه: در صفحهٔ آرایشگاه پنل همان آرایشگاه، در صفحهٔ اصلی ورود مدیر سایت
+function goAdmin() {
+  if (modalOpen()) return;
+  const home = route().view === 'home';
+  const next = home ? '#/' : `#/s/${encodeURIComponent(state.shopId)}/admin`;
+  const allowed = home ? isSuper() : canEnterShop(state.shopId);
+  if (!allowed) return openLogin(next);
+  if (location.hash !== next) location.hash = next;
+  else if (home) toast('شما وارد شده‌اید');
+}
+
+(function setupLongPress() {
+  const HOLD_MS = 2000;
+  const target = $('.brand-icon');
+  let timer = null, fired = false;
+  const cancel = () => { clearTimeout(timer); timer = null; target.classList.remove('holding'); };
+  target.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    fired = false;
+    target.classList.add('holding');
+    timer = setTimeout(() => {
+      fired = true;
+      cancel();
+      if (navigator.vibrate) navigator.vibrate(40);
+      goAdmin();
+    }, HOLD_MS);
+  });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach((e) => target.addEventListener(e, cancel));
+  target.addEventListener('contextmenu', (ev) => ev.preventDefault());
+  // بعد از نگه داشتن، کلیک لینک برند اجرا نشود
+  $('.brand').addEventListener('click', (ev) => { if (fired) { ev.preventDefault(); fired = false; } });
+})();
+
 /* ================================================================ router */
 // #/ لیست آرایشگاه‌ها · #/s/<id> نمای مشتری · #/s/<id>/admin پنل مدیریت
 function route() {
@@ -1301,9 +1328,7 @@ async function render(reload = true) {
     }
   } catch (err) {
     renderTopbar(r.view);
-    const back = r.view === 'home'
-      ? '<button class="btn btn-primary" onclick="render()">تلاش دوباره</button>'
-      : `<a class="btn btn-primary" href="#/">${icon('home')}همهٔ آرایشگاه‌ها</a>`;
+    const back = err.status === 404 || err.status === 403 ? '' : '<button class="btn btn-primary" onclick="render()">تلاش دوباره</button>';
     $('#app').innerHTML = `<div class="page"><div class="card">${emptyHTML(err.status === 403 ? 'lock' : 'alert', err.status === 404 ? 'آرایشگاه پیدا نشد' : err.status === 403 ? 'دسترسی ممکن نیست' : 'خطا در بارگذاری', esc(err.message), back)}</div></div>`;
   }
 }
