@@ -59,7 +59,7 @@ body {
   min-height: 100vh;
   overflow-x: clip;
 }
-button, input, select { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 a { color: inherit; text-decoration: none; }
 svg { width: 1.15em; height: 1.15em; flex-shrink: 0; }
 .container { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 16px; }
@@ -315,6 +315,15 @@ svg { width: 1.15em; height: 1.15em; flex-shrink: 0; }
 .link { color: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 textarea.input { resize: vertical; line-height: 1.8; }
 
+/* ================================================================ accounts */
+.cred-box { border: 1.5px dashed var(--border); border-radius: 14px; padding: 12px 14px 10px; margin-bottom: 16px; }
+.cred-box > .label { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.cred-row { align-items: flex-start; gap: 10px; }
+.cred-row .field { flex: 1; margin-bottom: 6px; min-width: 0; }
+.cred-box .hint { font-size: 12px; color: var(--muted); }
+.who { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); max-width: 160px; }
+.who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ================================================================ forms */
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
 .field > label, .label { font-weight: 600; font-size: 13.5px; }
@@ -432,6 +441,9 @@ textarea.input { resize: vertical; line-height: 1.8; }
   .grid-2 { grid-template-columns: 1fr; }
 }
 @media (max-width: 600px) {
+  .who { display: none; }
+  .cred-row { flex-direction: column; gap: 0; }
+  .cred-row .field { width: 100%; }
   .shop-list { grid-template-columns: 1fr; }
   body { font-size: 14.5px; }
   .page { padding-top: 16px; }

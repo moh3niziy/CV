@@ -92,8 +92,9 @@ const store = {
 };
 
 const state = {
-  password: store.get('hd_pass'),
-  get isAdmin() { return !!this.password; },
+  auth: readStoredAuth(),   // {token, role: super|owner|barber, shopId, barberId, name}
+  role: null,               // نقش در آرایشگاه باز شده (از سرور)
+  accounts: null,           // نام‌های کاربری مالک و آرایشگرها (فقط برای مالک)
   shops: null,      // لیست آرایشگاه‌ها برای صفحهٔ اصلی
   shopId: null,     // آرایشگاه انتخاب‌شده (از آدرس صفحه)
   pub: null,        // داده برای نمای مشتری (بدون اطلاعات مشتری‌ها)
@@ -107,13 +108,20 @@ const state = {
 
 class AppError extends Error {}
 
+function readStoredAuth() {
+  try { return JSON.parse(store.get('hd_auth')) || null; } catch { return null; }
+}
+const isSuper = () => state.auth?.role === 'super';
+const canManage = () => state.role === 'owner' || state.role === 'super';
+const canEnterShop = (id) => isSuper() || (!!state.auth && state.auth.shopId === id);
+
 /* ================================================================ data */
 // داده‌ها در دیتابیس Cloudflare D1 ذخیره می‌شوند و از طریق API همین سایت (worker.js) خوانده و نوشته می‌شوند.
-function setPassword(p) { state.password = p; store.set('hd_pass', p); }
+function setAuth(a) { state.auth = a; store.set('hd_auth', a ? JSON.stringify(a) : null); store.set('hd_pass', null); }
 
 async function api(method, path, body) {
   const headers = { 'Content-Type': 'application/json' };
-  if (state.password) headers['X-Admin-Password'] = state.password;
+  if (state.auth?.token) headers.Authorization = 'Bearer ' + state.auth.token;
   let res;
   try {
     res = await fetch('/api' + path, { method, headers, cache: 'no-store', body: body ? JSON.stringify(body) : undefined });
@@ -123,7 +131,7 @@ async function api(method, path, body) {
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && path.startsWith('/admin')) {
-      setPassword(null);
+      setAuth(null);
       state.admin = null;
       if (state.shopId) location.hash = `#/s/${encodeURIComponent(state.shopId)}`;
     }
@@ -146,8 +154,11 @@ async function loadShops() {
 }
 
 async function loadAdmin() {
-  const { shop, data, version } = await api('GET', `${shopPath()}/data`);
+  const { shop, data, version, role, barberId, accounts } = await api('GET', `${shopPath()}/data`);
   state.shop = shop;
+  state.role = role;
+  state.accounts = accounts || null;
+  if (role === 'barber') state.barberId = barberId;
   state.admin = normalizeData(data);
   state.version = version;
   return state.admin;
@@ -225,9 +236,8 @@ function applyBarber(data, body, id) {
     if (!(minutes >= 5 && minutes <= 600)) throw new AppError(`مدت زمان خدمت «${s.name}» باید بین ۵ تا ۶۰۰ دقیقه باشد`);
     services.push({ id: s.id || newId(), name: s.name, minutes });
   }
-  let barber;
-  if (id) barber = findIn(data.barbers, id, 'آرایشگر');
-  else { barber = { id: newId() }; data.barbers.push(barber); }
+  let barber = data.barbers.find((x) => x.id === id);
+  if (!barber) { barber = { id: id || newId() }; data.barbers.push(barber); }
   Object.assign(barber, { name, phone, hours, services });
   return barber;
 }
@@ -339,9 +349,11 @@ function renderTopbar(view) {
   const logoutBtn = `<button class="btn btn-ghost icon-btn" data-action="logout" title="خروج">${icon('logout')}</button>`;
   const adminBtn = `<button class="btn btn-primary" data-action="admin">${icon('lock')}<span>ادمین</span></button>`;
   let actions;
-  if (view === 'home') actions = `${themeBtn}${state.isAdmin ? logoutBtn : adminBtn}`;
-  else if (view === 'admin') actions = `${themeBtn}${homeBtn}<a class="btn" href="${shopHref}" title="نمای مشتری">${icon('eye')}<span class="btn-label-sm">نمای مشتری</span></a>${logoutBtn}`;
-  else actions = `${themeBtn}${homeBtn}${adminBtn}`;
+  const who = state.auth ? `<span class="who">${icon('user')}<span>${esc(state.auth.name || '')}</span></span>` : '';
+  const loginBtn = `<button class="btn btn-primary" data-action="admin">${icon('lock')}<span>${canEnterShop(state.shopId) ? 'پنل' : 'ورود'}</span></button>`;
+  if (view === 'home') actions = `${themeBtn}${isSuper() ? `${who}${logoutBtn}` : adminBtn}`;
+  else if (view === 'admin') actions = `${who}${themeBtn}${homeBtn}<a class="btn" href="${shopHref}" title="نمای مشتری">${icon('eye')}<span class="btn-label-sm">نمای مشتری</span></a>${logoutBtn}`;
+  else actions = `${themeBtn}${homeBtn}${loginBtn}`;
   $('#topActions').innerHTML = actions;
 }
 
@@ -353,17 +365,36 @@ function locationHTML(loc) {
     <a class="link" href="${esc(href)}" target="_blank" rel="noopener">نمایش روی نقشه</a></span>`;
 }
 
+/* ================================================================ credentials fields */
+function credFieldsHTML(prefix, username, passRequired, title) {
+  return `
+    <div class="cred-box">
+      <div class="label">${icon('lock')} ${title}</div>
+      <div class="row cred-row">
+        <div class="field">
+          <label for="${prefix}User">نام کاربری</label>
+          <input class="input ltr-input" id="${prefix}User" value="${esc(username || '')}" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="reza">
+        </div>
+        <div class="field">
+          <label for="${prefix}Pass">${passRequired ? 'رمز عبور' : 'رمز عبور جدید'}</label>
+          <input class="input ltr-input" id="${prefix}Pass" type="password" maxlength="64" autocomplete="new-password" placeholder="${passRequired ? 'حداقل ۴ کاراکتر' : 'خالی = بدون تغییر'}">
+        </div>
+      </div>
+      <span class="hint">نام کاربری فقط حروف انگلیسی، عدد و . _ - (حداقل ۳ کاراکتر).</span>
+    </div>`;
+}
+
 /* ================================================================ home (shops) */
 function renderHome() {
   renderTopbar('home');
   const shops = state.shops;
-  const addBtn = state.isAdmin ? `<button class="btn btn-primary" data-action="new-shop">${icon('plus')}افزودن آرایشگاه</button>` : '';
+  const addBtn = isSuper() ? `<button class="btn btn-primary" data-action="new-shop">${icon('plus')}افزودن آرایشگاه</button>` : '';
 
   let body;
   if (!shops.length) {
     body = `<div class="card">${emptyHTML('store', 'هنوز آرایشگاهی ثبت نشده',
-      state.isAdmin ? 'اولین آرایشگاه را با نام و لوکیشن ثبت کنید.' : 'برای افزودن آرایشگاه وارد پنل مدیریت شوید.',
-      state.isAdmin ? addBtn : `<button class="btn btn-primary" data-action="admin">${icon('lock')}ورود مدیر</button>`)}</div>`;
+      isSuper() ? 'اولین آرایشگاه را با نام، لوکیشن و حساب مالک ثبت کنید.' : 'برای افزودن آرایشگاه به‌عنوان مدیر سایت وارد شوید.',
+      isSuper() ? addBtn : `<button class="btn btn-primary" data-action="admin">${icon('lock')}ورود مدیر</button>`)}</div>`;
   } else {
     body = `
       ${shops.length > 3 ? `<div class="search">${icon('search')}<input class="input" id="shopSearch" placeholder="جستجوی نام یا محله…" autocomplete="off"></div>` : ''}
@@ -376,7 +407,7 @@ function renderHome() {
               <div class="sub">${icon('pin')}<span>${/^https?:\/\//i.test(x.location) ? 'لوکیشن روی نقشه' : esc(fa(x.location || '—'))}</span></div>
               <div class="sub">${icon('users')}<span>${x.barbers ? `${fa(x.barbers)} آرایشگر` : 'بدون آرایشگر'}</span></div>
             </div>
-            ${state.isAdmin ? `<div class="shop-actions">
+            ${isSuper() ? `<div class="shop-actions">
               <button class="btn icon-btn sm" data-action="edit-shop" data-id="${esc(x.id)}" title="ویرایش">${icon('edit')}</button>
               <button class="btn icon-btn sm btn-danger" data-action="del-shop" data-id="${esc(x.id)}" title="حذف">${icon('trash')}</button>
             </div>` : `<span class="chev">${icon('left')}</span>`}
@@ -406,7 +437,12 @@ function renderHome() {
   });
 }
 
-function openShopModal(shop) {
+async function openShopModal(shop) {
+  let owner = '';
+  if (shop) {
+    try { owner = (await api('GET', `/admin/shops/${encodeURIComponent(shop.id)}/data`)).accounts?.owner || ''; }
+    catch (err) { toast(err.message, true); return; }
+  }
   openModal(`
     <div class="modal sm" role="dialog" aria-modal="true">
       <div class="modal-head">
@@ -423,6 +459,7 @@ function openShopModal(shop) {
           <textarea class="input" id="sLoc" required maxlength="300" rows="3" placeholder="آدرس، یا لینک لوکیشن از گوگل‌مپ / نشان / بلد">${esc(shop?.location || '')}</textarea>
           <span class="hint">آدرس متنی یا لینک نقشه؛ برای مشتری‌ها با دکمهٔ «نمایش روی نقشه» نشان داده می‌شود.</span>
         </div>
+        ${credFieldsHTML('o', owner, !shop || !owner, 'حساب مالک آرایشگاه')}
       </form>
       <div class="modal-foot">
         <button class="btn btn-primary btn-lg" id="shopSave">${icon('check')}${shop ? 'ذخیرهٔ تغییرات' : 'ثبت آرایشگاه'}</button>
@@ -432,9 +469,14 @@ function openShopModal(shop) {
   const save = $('#shopSave');
   $('#shopForm').addEventListener('submit', (ev) => { ev.preventDefault(); save.click(); });
   save.addEventListener('click', async () => {
-    const payload = { name: $('#sName').value.trim(), location: $('#sLoc').value.trim() };
+    const payload = {
+      name: $('#sName').value.trim(), location: $('#sLoc').value.trim(),
+      ownerUsername: toEn($('#oUser').value).toLowerCase(), ownerPassword: toEn($('#oPass').value),
+    };
     if (!payload.name) { $('#sName').focus(); toast('نام آرایشگاه را وارد کنید', true); return; }
     if (!payload.location) { $('#sLoc').focus(); toast('لوکیشن آرایشگاه را وارد کنید', true); return; }
+    if (!payload.ownerUsername) { $('#oUser').focus(); toast('نام کاربری مالک را وارد کنید', true); return; }
+    if ((!shop || !owner) && !payload.ownerPassword) { $('#oPass').focus(); toast('رمز عبور مالک را وارد کنید', true); return; }
     save.disabled = true;
     try {
       if (shop) await api('PUT', `/admin/shops/${encodeURIComponent(shop.id)}`, payload);
@@ -547,32 +589,39 @@ function renderUser() {
 }
 
 /* ================================================================ login */
+// صفحهٔ اصلی: ورود مدیر سایت با رمز · صفحهٔ آرایشگاه: ورود مالک یا آرایشگر با نام کاربری و رمز
 function openLogin(next) {
+  const shopId = route().view === 'home' ? null : state.shopId;
   openModal(`
     <div class="modal sm" role="dialog" aria-modal="true">
       <div class="modal-head"><span></span><button class="btn btn-ghost icon-btn sm" data-action="close" aria-label="بستن">${icon('x')}</button></div>
       <form class="modal-body" id="loginForm" style="text-align:center;padding-bottom:24px">
         <div class="login-icon">${icon('lock')}</div>
-        <h2 style="margin:0 0 4px;font-size:19px">ورود به پنل مدیریت</h2>
-        <p class="muted" style="margin:0 0 18px">رمز عبور را وارد کنید</p>
-        <input class="input pin-input" id="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="12" required>
+        <h2 style="margin:0 0 4px;font-size:19px">${shopId ? `ورود به ${esc(state.shop?.name || 'آرایشگاه')}` : 'ورود مدیر سایت'}</h2>
+        <p class="muted" style="margin:0 0 18px">${shopId ? 'مالک یا آرایشگر با نام کاربری و رمز خود وارد شود' : 'رمز عبور مدیر سایت را وارد کنید'}</p>
+        ${shopId ? `<input class="input ltr-input" id="loginUser" placeholder="نام کاربری" autocomplete="username" autocapitalize="none" spellcheck="false" required style="margin-bottom:10px;text-align:center">` : ''}
+        <input class="input ${shopId ? 'ltr-input' : 'pin-input'}" id="pin" type="password" ${shopId ? 'placeholder="رمز عبور" style="text-align:center"' : 'inputmode="numeric"'} autocomplete="current-password" maxlength="64" required>
         <button class="btn btn-primary btn-lg btn-block" style="margin-top:14px">ورود</button>
       </form>
     </div>`);
   const pin = $('#pin');
-  setTimeout(() => pin.focus(), 50);
+  setTimeout(() => ($('#loginUser') || pin).focus(), 50);
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = $('#loginForm button');
+    btn.disabled = true;
     try {
       const password = toEn(pin.value);
-      await fetch('/api/login', { method: 'POST', headers: { 'X-Admin-Password': password } })
-        .then((r) => { if (!r.ok) throw new AppError(r.status === 401 ? 'رمز عبور اشتباه است' : 'ارتباط با سرور برقرار نشد'); },
-              (e) => { throw e instanceof AppError ? e : new AppError('ارتباط با سرور برقرار نشد'); });
-      setPassword(password);
+      const auth = shopId
+        ? await api('POST', `/shops/${encodeURIComponent(shopId)}/login`, { username: toEn($('#loginUser').value).toLowerCase(), password })
+        : await api('POST', '/login', { password });
+      setAuth(auth);
       closeModal();
+      toast(`خوش آمدید${auth.name ? '، ' + auth.name : ''}`);
       if (next && location.hash !== next) location.hash = next;
       else render();
     } catch (err) {
+      btn.disabled = false;
       pin.value = '';
       const form = $('#loginForm');
       form.classList.remove('shake'); void form.offsetWidth; form.classList.add('shake');
@@ -591,15 +640,20 @@ function renderAdmin() {
       <button class="${state.tab === 'barbers' ? 'active' : ''}" data-action="tab" data-tab="barbers">${icon('users')}آرایشگرها</button>
     </div>`;
 
-  const body = state.tab === 'barbers' || !barbers.length ? adminBarbersHTML() : adminScheduleHTML();
+  if (!canManage()) state.tab = 'schedule';
+  if (state.role === 'barber' && !barbers.length) {
+    $('#app').innerHTML = `<div class="page"><div class="card">${emptyHTML('alert', 'پروفایل پیدا نشد', 'پروفایل آرایشگر شما حذف شده است. با مالک آرایشگاه تماس بگیرید.')}</div></div>`;
+    return;
+  }
+  const body = canManage() && (state.tab === 'barbers' || !barbers.length) ? adminBarbersHTML() : adminScheduleHTML();
   $('#app').innerHTML = `
     <div class="page">
       <div class="admin-head">
         <div class="hero" style="padding:0">
-          <h1>پنل مدیریت</h1>
-          <p>${state.tab === 'schedule' && barbers.length ? 'نوبت‌های روز را مدیریت کنید' : 'آرایشگرها، ساعت کاری و خدمات'}</p>
+          <h1>${state.role === 'barber' ? 'نوبت‌های من' : 'پنل مدیریت'}</h1>
+          <p>${state.role === 'barber' ? 'نوبت‌های خودتان را ثبت و مدیریت کنید' : state.tab === 'schedule' && barbers.length ? 'نوبت‌های روز را مدیریت کنید' : 'آرایشگرها، ساعت کاری و خدمات'}</p>
         </div>
-        ${barbers.length ? tabs : ''}
+        ${barbers.length && canManage() ? tabs : ''}
       </div>
       ${body}
     </div>`;
@@ -631,10 +685,10 @@ function adminScheduleHTML() {
   else agenda = `<div class="card">${emptyHTML('calendar', 'روز کاملاً پر است', 'زمان خالی در ساعت کاری باقی نمانده است.')}</div>`;
 
   return `
-    <div class="section-title"><span>آرایشگر</span></div>
+    ${state.role === 'barber' ? '' : `<div class="section-title"><span>آرایشگر</span></div>
     <div class="chips-scroll">
       ${barbers.map((x) => `<button class="pick ${x.id === b.id ? 'active' : ''}" data-action="pick-barber" data-id="${x.id}">${avatar(x, 26)}${esc(x.name)}</button>`).join('')}
-    </div>
+    </div>`}
 
     <div class="section-title">
       <span>${longDate(state.date)}</span>
@@ -702,6 +756,7 @@ function adminBarbersHTML() {
               <span>${icon('phone')}<span class="ltr">${fa(esc(b.phone))}</span></span>
               <span>${icon('clock')}${hoursSummary(b)}</span>
               <span>${icon('list')}${fa(b.services.length)} خدمت</span>
+              <span>${icon('lock')}${state.accounts?.barbers?.[b.id] ? `<span class="ltr">${esc(state.accounts.barbers[b.id])}</span>` : 'بدون حساب کاربری'}</span>
             </div>
           </div>
           <div class="row">
@@ -728,6 +783,7 @@ function adminBarbersHTML() {
         <label for="locInput">لوکیشن</label>
         <textarea class="input" id="locInput" rows="2" maxlength="300" required placeholder="آدرس یا لینک نقشه">${esc(state.shop.location)}</textarea>
       </div>
+      ${credFieldsHTML('own', state.accounts?.owner || '', !state.accounts?.owner, 'حساب مالک')}
       <button class="btn btn-primary">${icon('check')}ذخیره</button>
     </form>
 
@@ -909,6 +965,8 @@ function openBarberModal(barber) {
     ],
   };
 
+  const account = barber ? state.accounts?.barbers?.[barber.id] || '' : '';
+
   const svcRow = (s = {}) => `
     <div class="svc-row" data-svc="${esc(s.id || '')}">
       <input class="input" data-f="name" placeholder="نام خدمت (مثلاً رنگ مو)" value="${esc(s.name || '')}" maxlength="40">
@@ -932,6 +990,8 @@ function openBarberModal(barber) {
           <input class="input ltr-input" id="bPhone" type="tel" inputmode="tel" required maxlength="20" value="${esc(fa(b.phone))}" placeholder="۰۹۱۲۰۰۰۰۰۰۰">
           <span class="hint">این شماره برای رزرو تلفنی به مشتری‌ها نمایش داده می‌شود.</span>
         </div>
+
+        ${credFieldsHTML('bc', account, !account, 'حساب کاربری آرایشگر (اختیاری)')}
 
         <div class="field">
           <div class="row" style="justify-content:space-between">
@@ -1000,9 +1060,21 @@ function openBarberModal(barber) {
     };
     if (!payload.name) { $('#bName').focus(); toast('نام آرایشگر را وارد کنید', true); return; }
     if (!payload.phone) { $('#bPhone').focus(); toast('شماره تماس را وارد کنید', true); return; }
+    const username = toEn($('#bcUser').value).toLowerCase();
+    const password = toEn($('#bcPass').value);
+    if (username && !account && !password) { $('#bcPass').focus(); toast('برای حساب آرایشگر رمز عبور وارد کنید', true); return; }
+    if (!username && password) { $('#bcUser').focus(); toast('نام کاربری آرایشگر را وارد کنید', true); return; }
     $('#barberSave').disabled = true;
+    const id = barber?.id || newId();
     try {
-      const saved = await mutate((data) => applyBarber(data, payload, barber?.id));
+      // اول حساب کاربری ساخته می‌شود تا تکراری بودن نام کاربری قبل از ذخیرهٔ آرایشگر مشخص شود
+      if (username && (username !== account || password)) {
+        await api('PUT', `${shopPath()}/accounts/${encodeURIComponent(id)}`, { username, password });
+      } else if (!username && account) {
+        await api('DELETE', `${shopPath()}/accounts/${encodeURIComponent(id)}`);
+      }
+      const saved = await mutate((data) => applyBarber(data, payload, id));
+      await loadAdmin();
       if (!barber) { state.barberId = saved.id; store.set('hd_barber', saved.id); }
       closeModal();
       toast(barber ? 'تغییرات ذخیره شد' : 'آرایشگر اضافه شد');
@@ -1069,12 +1141,13 @@ document.addEventListener('click', async (ev) => {
     case 'close': return closeModal();
     case 'admin': {
       const next = route().view === 'home' ? '#/' : `#/s/${encodeURIComponent(state.shopId)}/admin`;
-      if (state.isAdmin) { if (location.hash !== next) location.hash = next; }
+      const allowed = route().view === 'home' ? isSuper() : canEnterShop(state.shopId);
+      if (allowed) { if (location.hash !== next) location.hash = next; else render(); }
       else openLogin(next);
       return;
     }
     case 'logout': {
-      setPassword(null); state.admin = null;
+      setAuth(null); state.admin = null; state.role = null; state.accounts = null;
       const r = route();
       if (r.view === 'admin') location.hash = `#/s/${encodeURIComponent(state.shopId)}`;
       else render();
@@ -1151,8 +1224,17 @@ document.addEventListener('submit', async (ev) => {
   if (ev.target.id !== 'settingsForm') return;
   ev.preventDefault();
   try {
-    state.shop = await api('PUT', `/admin/shops/${encodeURIComponent(state.shopId)}`,
-      { name: $('#shopInput').value.trim(), location: $('#locInput').value.trim() });
+    const ownerUsername = toEn($('#ownUser').value).toLowerCase();
+    const ownerPassword = toEn($('#ownPass').value);
+    const res = await api('PUT', `/admin/shops/${encodeURIComponent(state.shopId)}`,
+      { name: $('#shopInput').value.trim(), location: $('#locInput').value.trim(), ownerUsername, ownerPassword });
+    // اگر مالک اطلاعات ورود خودش را عوض کرد، با اطلاعات جدید دوباره وارد می‌شود
+    if (state.auth?.role === 'owner' && (ownerPassword || ownerUsername !== state.accounts?.owner)) {
+      if (ownerPassword) setAuth(await api('POST', `/shops/${encodeURIComponent(state.shopId)}/login`, { username: ownerUsername, password: ownerPassword }));
+      else { setAuth(null); toast('نام کاربری تغییر کرد؛ دوباره وارد شوید'); location.hash = `#/s/${encodeURIComponent(state.shopId)}`; return; }
+    }
+    state.shop = { id: res.id, name: res.name, location: res.location };
+    await loadAdmin();
     toast('اطلاعات آرایشگاه ذخیره شد');
     renderAdmin();
   } catch (err) { toast(err.message, true); }
@@ -1193,7 +1275,7 @@ async function render(reload = true) {
     }
     if (state.shopId !== r.shopId) { state.shopId = r.shopId; state.pub = null; state.admin = null; state.shop = null; }
     if (r.view === 'admin') {
-      if (!state.isAdmin) { state.pendingLogin = true; location.hash = `#/s/${encodeURIComponent(r.shopId)}`; return; }
+      if (!canEnterShop(r.shopId)) { state.pendingLogin = true; location.hash = `#/s/${encodeURIComponent(r.shopId)}`; return; }
       if (reload || !state.admin) await loadAdmin();
       renderAdmin();
     } else {
