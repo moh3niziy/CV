@@ -13,6 +13,8 @@ const EMPTY = { barbers: [], appointments: [] };
 const MAX_BODY = 1024 * 1024;
 const TOKEN_DAYS = 30;
 const USERNAME_RE = /^[a-z0-9_.-]{3,32}$/;
+const TIME_ZONE = 'Asia/Tehran'; // ساعت مرجع برای جلوگیری از رزرو در زمان گذشته
+const PAST_GRACE_MIN = 5;        // چند دقیقه تأخیر مجاز (مثلاً ثبت مشتری که همین الان نشسته)
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
@@ -143,6 +145,27 @@ function requireShop(auth, shopId, roles) {
 }
 
 /* ---------------------------------------------------------------- helpers */
+function localNow() {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, min: Number(p.hour) * 60 + Number(p.minute) };
+}
+
+// نوبت جدید یا جابه‌جا شده نباید در روز یا ساعت گذشته باشد
+function assertNotPast(prevList, nextList) {
+  const now = localNow();
+  const prev = new Map(prevList.map((a) => [a.id, a]));
+  for (const a of nextList) {
+    const old = prev.get(a.id);
+    if (old && old.date === a.date && old.start === a.start) continue;
+    const [h, m] = String(a.start).split(':').map(Number);
+    if (a.date < now.date || (a.date === now.date && h * 60 + m < now.min - PAST_GRACE_MIN)) {
+      throw new HttpError(400, 'ثبت نوبت برای روز یا ساعت گذشته ممکن نیست');
+    }
+  }
+}
+
 function newId() {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 10);
 }
@@ -386,6 +409,7 @@ async function handleApi(request, env, path) {
       } else {
         next = { barbers: data.barbers, appointments: data.appointments };
       }
+      assertNotPast(cur.data.appointments, next.appointments);
       const ops = [
         db.prepare('UPDATE shops SET data = ?, version = version + 1 WHERE id = ? AND version = ?').bind(JSON.stringify(next), id, version),
       ];

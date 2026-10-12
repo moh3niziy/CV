@@ -780,13 +780,15 @@ function renderAdmin() {
 function adminScheduleHTML() {
   const { barbers, appointments } = state.admin;
   const b = currentBarber(barbers);
-  const plan = dayPlan(b, state.date, appointments);
+  const pastDay = state.date < todayISO();
+  const plan = dayPlan(b, state.date, appointments, { fromNow: true });
+  if (pastDay) plan.gaps = [];
   const booked = plan.list.reduce((s, a) => s + toMin(a.end) - toMin(a.start), 0);
   const free = plan.gaps.reduce((s, [x, y]) => s + y - x, 0);
   const isToday = state.date === todayISO();
   const now = nowMin();
 
-  const locked = state.shop?.active === false; // آرایشگاه غیرفعال: ثبت نوبت جدید ممکن نیست
+  const locked = state.shop?.active === false || pastDay; // غیرفعال یا روز گذشته: ثبت نوبت جدید ممکن نیست
 
   // ترکیب نوبت‌ها و بازه‌های خالی به ترتیب زمان
   const items = [
@@ -805,6 +807,8 @@ function adminScheduleHTML() {
   let agenda;
   if (items.length) agenda = `<div class="agenda">${items.map((i) => i.html).join('')}</div>`;
   else if (plan.closed) agenda = `<div class="card">${emptyHTML('coffee', 'روز تعطیل', `${esc(b.name)} در این روز کار نمی‌کند. ${locked ? '' : ' در صورت نیاز همچنان می‌توانید نوبت ثبت کنید.'}`, locked ? '' : `<button class="btn btn-primary" data-action="new-appt">${icon('plus')}ثبت نوبت</button>`)}</div>`;
+  else if (pastDay) agenda = `<div class="card">${emptyHTML('calendar', 'این روز گذشته است', 'برای این روز نوبتی ثبت نشده بود.')}</div>`;
+  else if (isToday && now >= plan.close) agenda = `<div class="card">${emptyHTML('calendar', 'ساعت کاری امروز تمام شده است', 'برای امروز زمان خالی دیگری باقی نمانده است.')}</div>`;
   else agenda = `<div class="card">${emptyHTML('calendar', 'روز کاملاً پر است', 'زمان خالی در ساعت کاری باقی نمانده است.')}</div>`;
 
   return `
@@ -988,6 +992,7 @@ function setTime(root, name, value) {
 /* ================================================================ appointment modal */
 function openApptModal(appt, presetStart) {
   if (!appt && state.shop?.active === false) { toast('این آرایشگاه غیرفعال است و نوبت جدید ثبت نمی‌شود', true); return; }
+  if (!appt && state.date < todayISO()) { toast('ثبت نوبت برای روزهای گذشته ممکن نیست', true); return; }
   const { barbers, appointments } = state.admin;
   const b = barbers.find((x) => x.id === (appt?.barberId || state.barberId));
   if (!b) return;
@@ -997,7 +1002,8 @@ function openApptModal(appt, presetStart) {
     return;
   }
   const date = appt?.date || state.date;
-  const plan = dayPlan(b, date, appointments.filter((a) => a.id !== appt?.id));
+  const plan = dayPlan(b, date, appointments.filter((a) => a.id !== appt?.id), { fromNow: true });
+  if (date < todayISO()) plan.gaps = [];
   const selected = new Set(appt ? appt.services.map((s) => s.id).filter((id) => b.services.some((s) => s.id === id)) : []);
   let start = appt?.start || presetStart;
   if (!start) {
@@ -1058,6 +1064,9 @@ function openApptModal(appt, presetStart) {
     const e = s + total;
     const conflict = total && plan.list.find((a) => s < toMin(a.end) && toMin(a.start) < e);
     const outside = total && (plan.closed || s < plan.open || e > plan.close);
+    // نوبت جدید یا جابه‌جا شده نباید در گذشته باشد (۵ دقیقه تأخیر مجاز)
+    const moved = !appt || fromMin(s) !== appt.start;
+    const past = moved && (date < todayISO() || (date === todayISO() && s < nowMin() - 5));
     let html = '';
     if (total) {
       html += `<div class="summary">
@@ -1067,11 +1076,12 @@ function openApptModal(appt, presetStart) {
     } else {
       html += `<div class="summary"><span class="muted">حداقل یک خدمت انتخاب کنید تا زمان پایان محاسبه شود</span></div>`;
     }
-    if (e > 1440) html += `<div class="alert alert-busy">${icon('alert')}<span>زمان پایان از نیمه‌شب می‌گذرد.</span></div>`;
+    if (past) html += `<div class="alert alert-busy">${icon('alert')}<span>این ساعت گذشته است؛ ساعت دیگری انتخاب کنید.</span></div>`;
+    else if (e > 1440) html += `<div class="alert alert-busy">${icon('alert')}<span>زمان پایان از نیمه‌شب می‌گذرد.</span></div>`;
     else if (conflict) html += `<div class="alert alert-busy">${icon('alert')}<span>با نوبت «${esc(conflict.customerName)}» (${faTime(conflict.start)} تا ${faTime(conflict.end)}) تداخل دارد.</span></div>`;
     else if (outside) html += `<div class="alert alert-warn">${icon('alert')}<span>${plan.closed ? 'این روز تعطیل است.' : `خارج از ساعت کاری (${faTime(plan.open)} تا ${faTime(plan.close)}) است.`} ثبت امکان‌پذیر است.</span></div>`;
     $('#apptSummary').innerHTML = html;
-    $('#apptSave').disabled = !total || !!conflict || e > 1440;
+    $('#apptSave').disabled = !total || !!conflict || e > 1440 || past;
     $$('[data-quick]', form).forEach((q) => q.classList.toggle('active', q.dataset.quick === fromMin(s)));
   };
 
@@ -1523,8 +1533,8 @@ window.addEventListener('hashchange', () => {
   render();
 });
 
-// به‌روزرسانی خودکار هر یک دقیقه (وقتی پنجره‌ای باز نیست)
-setInterval(() => { if (!modalOpen() && document.visibilityState === 'visible') render(); }, 60000);
+// به‌روزرسانی خودکار هر ۳ دقیقه (وقتی پنجره‌ای باز نیست)
+setInterval(() => { if (!modalOpen() && document.visibilityState === 'visible') render(); }, 3 * 60000);
 
 $('.brand-icon').innerHTML = icon('scissors');
 render();
