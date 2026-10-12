@@ -362,6 +362,7 @@ svg { width: 1.15em; height: 1.15em; flex-shrink: 0; }
 .shop-card.inactive { opacity: .7; border-style: dashed; }
 .shop-card.inactive .shop-icon { background: var(--surface-2); color: var(--muted); }
 .badge { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); vertical-align: middle; }
+.badge-owner { background: var(--accent-soft); color: var(--accent); }
 .btn-warn { color: var(--warn); }
 .btn-warn:hover { border-color: var(--warn); background: var(--warn-soft); }
 .btn-on { color: var(--free); }
@@ -402,7 +403,7 @@ textarea.input { resize: vertical; line-height: 1.8; }
 /* ================================================================ forms */
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
 .field > label, .label { font-weight: 600; font-size: 13.5px; }
-.field .hint { font-size: 12px; color: var(--muted); }
+.hint, .field .hint { font-size: 12px; color: var(--muted); }
 .input, select.input {
   width: 100%; border: 1.5px solid var(--border); background: var(--surface); border-radius: var(--radius-sm);
   padding: 10px 14px; outline: none; transition: border-color .2s, box-shadow .2s; min-width: 0;

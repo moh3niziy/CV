@@ -222,6 +222,18 @@ function findIn(items, id, label) {
   return item;
 }
 
+// پیش‌فرض آرایشگر جدید: شنبه تا پنجشنبه ۱۰ تا ۲۰ و دو خدمت رایج
+function defaultBarber() {
+  return {
+    name: '', phone: '',
+    hours: Object.fromEntries(WEEK.map(([k]) => [k, { on: k !== '5', start: '10:00', end: '20:00' }])),
+    services: [
+      { name: 'اصلاح مو', minutes: 30 },
+      { name: 'اصلاح ریش', minutes: 15 },
+    ],
+  };
+}
+
 function applyBarber(data, body, id) {
   const name = String(body.name || '').trim();
   const phone = toEn(body.phone);
@@ -856,6 +868,42 @@ function hoursSummary(b) {
   return same ? `${days} · ${faTime(first.start)} تا ${faTime(first.end)}` : days;
 }
 
+// مالک می‌تواند خودش را هم به‌عنوان آرایشگر اضافه کند
+function ownerBarberHTML() {
+  const me = state.role === 'owner';
+  const ob = state.admin.barbers.find((b) => b.owner);
+  if (ob) {
+    return `
+      <div class="section-title"><span>مالک هم آرایشگر است</span></div>
+      <div class="card barber-row">
+        <div class="info">
+          <div class="name" style="font-size:15px">${me ? 'شما' : 'مالک'} با نام «${esc(ob.name)}» در لیست آرایشگرها هستید</div>
+          <div class="hint muted" style="font-size:13px">ساعت کاری و خدمات را از دکمهٔ ویرایش همان کارت تنظیم کنید.</div>
+        </div>
+        <div class="row" style="flex-wrap:wrap">
+          <button class="btn" data-action="edit-barber" data-id="${ob.id}">${icon('edit')}ویرایش</button>
+          <button class="btn btn-danger" data-action="del-barber" data-id="${ob.id}">${icon('trash')}حذف از آرایشگرها</button>
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="section-title"><span>مالک هم آرایشگر است؟</span></div>
+    <form class="card" id="ownerBarberForm">
+      <p class="muted" style="margin:0 0 14px;font-size:13.5px">اگر ${me ? 'خودتان' : 'مالک'} هم آرایشگری می‌کند، نام و شماره را وارد کنید تا به لیست آرایشگرها اضافه شود. ساعت کاری و خدمات را بعداً می‌توانید ویرایش کنید.</p>
+      <div class="row cred-row">
+        <div class="field">
+          <label for="obName">نام</label>
+          <input class="input" id="obName" maxlength="40" required placeholder="${me ? 'نام شما' : 'نام مالک'}">
+        </div>
+        <div class="field">
+          <label for="obPhone">شماره تماس</label>
+          <input class="input ltr-input" id="obPhone" type="tel" inputmode="tel" maxlength="20" required placeholder="۰۹۱۲۰۰۰۰۰۰۰">
+        </div>
+      </div>
+      <button class="btn btn-primary">${icon('plus')}${me ? 'اضافه کردن خودم به آرایشگرها' : 'اضافه کردن مالک به آرایشگرها'}</button>
+    </form>`;
+}
+
 function adminBarbersHTML() {
   const { barbers } = state.admin;
   const list = barbers.length
@@ -863,12 +911,12 @@ function adminBarbersHTML() {
         <div class="card barber-row">
           ${avatar(b, 52)}
           <div class="info">
-            <div class="name">${esc(b.name)}</div>
+            <div class="name">${esc(b.name)}${b.owner ? ' <span class="badge badge-owner">مالک</span>' : ''}</div>
             <div class="meta">
               <span>${icon('phone')}<span class="ltr">${fa(esc(b.phone))}</span></span>
               <span>${icon('clock')}${hoursSummary(b)}</span>
               <span>${icon('list')}${fa(b.services.length)} خدمت</span>
-              <span>${icon('lock')}${state.accounts?.barbers?.[b.id] ? `<span class="ltr">${esc(state.accounts.barbers[b.id])}</span>` : 'بدون حساب کاربری'}</span>
+              <span>${icon('lock')}${b.owner ? 'ورود با حساب مالک' : state.accounts?.barbers?.[b.id] ? `<span class="ltr">${esc(state.accounts.barbers[b.id])}</span>` : 'بدون حساب کاربری'}</span>
             </div>
           </div>
           <div class="row">
@@ -884,6 +932,8 @@ function adminBarbersHTML() {
       ${barbers.length ? `<button class="btn btn-primary" data-action="new-barber">${icon('plus')}افزودن آرایشگر</button>` : ''}
     </div>
     ${list}
+
+    ${ownerBarberHTML()}
 
     <div class="section-title"><span>اطلاعات آرایشگاه</span></div>
     <form class="card" id="settingsForm">
@@ -1070,14 +1120,8 @@ function openApptModal(appt, presetStart) {
 
 /* ================================================================ barber modal */
 function openBarberModal(barber) {
-  const b = barber || {
-    name: '', phone: '',
-    hours: Object.fromEntries(WEEK.map(([k]) => [k, { on: k !== '5', start: '10:00', end: '20:00' }])),
-    services: [
-      { name: 'اصلاح مو', minutes: 30 },
-      { name: 'اصلاح ریش', minutes: 15 },
-    ],
-  };
+  const b = barber || defaultBarber();
+  const isOwner = !!barber?.owner;
 
   const account = barber ? state.accounts?.barbers?.[barber.id] || '' : '';
 
@@ -1105,7 +1149,7 @@ function openBarberModal(barber) {
           <span class="hint">این شماره برای رزرو تلفنی به مشتری‌ها نمایش داده می‌شود.</span>
         </div>
 
-        ${credFieldsHTML('bc', account, !account, 'حساب کاربری آرایشگر (اختیاری)')}
+        ${isOwner ? `<div class="alert alert-warn" style="background:var(--accent-soft);color:var(--accent)">${icon('user')}<span>این پروفایل مالک آرایشگاه است و با حساب مالک وارد می‌شود.</span></div>` : credFieldsHTML('bc', account, !account, 'حساب کاربری آرایشگر (اختیاری)')}
 
         <div class="field">
           <div class="row" style="justify-content:space-between">
@@ -1174,8 +1218,8 @@ function openBarberModal(barber) {
     };
     if (!payload.name) { $('#bName').focus(); toast('نام آرایشگر را وارد کنید', true); return; }
     if (!payload.phone) { $('#bPhone').focus(); toast('شماره تماس را وارد کنید', true); return; }
-    const username = toEn($('#bcUser').value).toLowerCase();
-    const password = toEn($('#bcPass').value);
+    const username = isOwner ? '' : toEn($('#bcUser').value).toLowerCase();
+    const password = isOwner ? '' : toEn($('#bcPass').value);
     if (username && !account && !password) { $('#bcPass').focus(); toast('برای حساب آرایشگر رمز عبور وارد کنید', true); return; }
     if (!username && password) { $('#bcUser').focus(); toast('نام کاربری آرایشگر را وارد کنید', true); return; }
     $('#barberSave').disabled = true;
@@ -1184,7 +1228,7 @@ function openBarberModal(barber) {
       // اول حساب کاربری ساخته می‌شود تا تکراری بودن نام کاربری قبل از ذخیرهٔ آرایشگر مشخص شود
       if (username && (username !== account || password)) {
         await api('PUT', `${shopPath()}/accounts/${encodeURIComponent(id)}`, { username, password });
-      } else if (!username && account) {
+      } else if (!username && account && !isOwner) {
         await api('DELETE', `${shopPath()}/accounts/${encodeURIComponent(id)}`);
       }
       const saved = await mutate((data) => applyBarber(data, payload, id));
@@ -1339,6 +1383,30 @@ document.addEventListener('click', async (ev) => {
       catch (err) { toast(err.message, true); }
       return;
     }
+  }
+});
+
+document.addEventListener('submit', async (ev) => {
+  if (ev.target.id !== 'ownerBarberForm') return;
+  ev.preventDefault();
+  const btn = $('#ownerBarberForm button');
+  btn.disabled = true;
+  try {
+    const body = { ...defaultBarber(), name: $('#obName').value.trim(), phone: toEn($('#obPhone').value) };
+    if (!body.name) throw new AppError('نام را وارد کنید');
+    if (!body.phone) throw new AppError('شماره تماس را وارد کنید');
+    const saved = await mutate((data) => {
+      if (data.barbers.some((b) => b.owner)) throw new AppError('مالک قبلاً به آرایشگرها اضافه شده است');
+      const b = applyBarber(data, body, newId());
+      b.owner = true;
+      return b;
+    });
+    state.barberId = saved.id; store.set('hd_barber', saved.id);
+    toast('به لیست آرایشگرها اضافه شد');
+    renderAdmin();
+  } catch (err) {
+    btn.disabled = false;
+    toast(err.message, true);
   }
 });
 
