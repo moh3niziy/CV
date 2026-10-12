@@ -286,23 +286,96 @@ function dayPlan(barber, date, appts, { fromNow = false } = {}) {
   return { closed: false, list, gaps: gaps.filter(([s, e]) => e - s >= 5), open, close, cutoff };
 }
 
+// نوار زمانی روز: بخش‌های خالی، رزرو و گذشته روی یک خط‌کش ساعت، به‌همراه نشانگر «الان».
+// زمان از راست به چپ جلو می‌رود. در نمای مشتری (showPast) یک جملهٔ وضعیت هم بالای نوار نمایش داده می‌شود.
 function timelineHTML(plan, showPast) {
-  const span = plan.close - plan.open;
-  const pct = (m) => ((Math.min(Math.max(m, plan.open), plan.close) - plan.open) / span) * 100;
-  let html = '';
-  if (showPast && plan.cutoff > plan.open) {
-    html += `<div class="seg-past" style="right:0;width:${pct(plan.cutoff)}%"></div>`;
+  const { open, close } = plan;
+  const span = close - open;
+  const pct = (m) => ((Math.min(Math.max(m, open), close) - open) / span) * 100;
+  const now = plan.cutoff > -1 && state.date === todayISO() ? nowMin() : -1;
+  const hasNow = now > open && now < close;
+  const pastEnd = showPast && now > open ? Math.min(now, close) : open;
+
+  // بازه‌های رزرو، مرتب و ادغام‌شده
+  const busy = [];
+  for (const a of [...plan.list].sort((x, y) => toMin(x.start) - toMin(y.start))) {
+    const s = Math.max(toMin(a.start), open), e = Math.min(toMin(a.end), close);
+    if (e <= s) continue;
+    const last = busy.at(-1);
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+    else busy.push([s, e]);
   }
-  for (const a of plan.list) {
-    const s = pct(toMin(a.start)), e = pct(toMin(a.end));
-    if (e > s) html += `<div class="seg-busy" style="right:${s}%;width:${e - s}%" title="${faTime(a.start)} تا ${faTime(a.end)}"></div>`;
+
+  // تقسیم کل ساعت کاری به بخش‌های پشت‌سرهم
+  const segs = [];
+  const push = (kind, s, e) => {
+    if (e <= s) return;
+    const last = segs.at(-1);
+    if (last && last.kind === kind && last.e === s) last.e = e;
+    else segs.push({ kind, s, e });
+  };
+  const add = (kind, s, e) => {
+    if (s < pastEnd) { push('past', s, Math.min(e, pastEnd)); s = Math.max(s, pastEnd); }
+    push(kind, s, e);
+  };
+  let t = open;
+  for (const [s, e] of busy) { add('free', t, s); add('busy', Math.max(s, t), e); t = Math.max(t, e); }
+  add('free', t, close);
+
+  const segHTML = segs.map(({ kind, s, e }) => {
+    const w = pct(e) - pct(s);
+    let label = '';
+    if (kind === 'free') label = w >= 24 ? `خالی <small>${fmtDur(e - s)}</small>` : w >= 9 ? 'خالی' : '';
+    else if (kind === 'busy') label = w >= 9 ? 'رزرو' : '';
+    else if (w >= 16) label = 'گذشته';
+    const title = `${kind === 'free' ? 'خالی' : kind === 'busy' ? 'رزرو شده' : 'گذشته'}: ${faTime(s)} تا ${faTime(e)}`;
+    return `<div class="tl-seg tl-${kind}" style="right:${pct(s)}%;width:${w}%" title="${title}">${label}</div>`;
+  }).join('');
+
+  // خط‌کش ساعت: فقط ساعت‌های کامل، با فاصلهٔ مناسب برای طول روز
+  const hours = span / 60;
+  const step = (hours <= 7 ? 1 : hours <= 13 ? 2 : 3) * 60;
+  let ticks = '';
+  for (let m = Math.ceil(open / step) * step; m < close; m += step) {
+    const p = pct(m);
+    if (p < 15 || p > 85) continue; // جا برای برچسب‌های شروع و پایان
+    ticks += `<span class="tl-tick" style="right:${p}%">${faTime(m)}</span>`;
   }
-  if (plan.cutoff > plan.open && plan.cutoff < plan.close) html += `<div class="now" style="right:${pct(plan.cutoff)}%"></div>`;
+
+  const nowHTML = hasNow ? `
+    <span class="tl-now" style="right:${Math.min(Math.max(pct(now), 9), 91)}%">الان ${faTime(now)}</span>
+    <span class="tl-now-line" style="right:${pct(now)}%"></span>` : '';
+
   return `
-    <div class="timeline-wrap">
-      <div class="timeline">${html}</div>
-      <div class="timeline-labels"><span>${faTime(plan.open)}</span><span>${faTime(plan.close)}</span></div>
+    ${showPast ? statusHTML(plan) : ''}
+    <div class="tl ${hasNow ? 'has-now' : ''}">
+      ${nowHTML}
+      <div class="tl-bar">${segHTML}</div>
+      <div class="tl-ticks">
+        <span class="tl-end start">${faTime(open)}<small>شروع کار</small></span>
+        ${ticks}
+        <span class="tl-end finish">${faTime(close)}<small>پایان کار</small></span>
+      </div>
     </div>`;
+}
+
+// جملهٔ وضعیت برای مشتری: الان خالی است یا رزرو، و اولین زمان خالی
+function statusHTML(plan) {
+  const today = state.date === todayISO();
+  const n = nowMin();
+  const first = plan.gaps[0];
+  let kind = 'free', text;
+  if (today && n >= plan.close) { kind = 'off'; text = 'ساعت کاری امروز تمام شده است'; }
+  else if (!first) { kind = 'busy'; text = today ? 'تا پایان امروز زمان خالی وجود ندارد' : 'زمان خالی در این روز وجود ندارد'; }
+  else if (today && n < plan.open) { text = `امروز از ساعت ${faTime(plan.open)} شروع می‌شود · اولین زمان خالی ${faTime(first[0])}`; }
+  else if (today) {
+    const current = plan.list.find((a) => toMin(a.start) <= n && n < toMin(a.end));
+    if (current) { kind = 'busy'; text = `الان رزرو است · اولین زمان خالی از ساعت ${faTime(first[0])}`; }
+    else text = `الان خالی است تا ساعت ${faTime(first[1])}`;
+  } else {
+    text = `اولین زمان خالی از ساعت ${faTime(first[0])}`;
+  }
+  return `<div class="tl-status ${kind}"><i></i><span>${text}</span></div>`;
 }
 
 /* ================================================================ shared UI pieces */
@@ -556,9 +629,9 @@ function renderUser() {
         </div>
         ${!plan.closed ? timelineHTML(plan, true) + `
           <div class="legend">
-            <span><i style="background:var(--free)"></i>خالی</span>
-            <span><i style="background:var(--busy)"></i>رزرو شده</span>
-            ${plan.cutoff > plan.open ? '<span><i style="background:var(--past)"></i>گذشته</span>' : ''}
+            <span><i class="lg-free"></i>خالی</span>
+            <span><i class="lg-busy"></i>رزرو شده</span>
+            ${plan.cutoff > plan.open ? '<span><i class="lg-past"></i>گذشته</span>' : ''}
           </div>` : ''}
         <div class="section-title">
           <span>زمان‌های خالی</span>
