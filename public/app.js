@@ -24,6 +24,10 @@ const ICONS = {
   coffee: '<path d="M17 8h1a4 4 0 1 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4zM6 2v2M10 2v2M14 2v2"/>',
   store: '<path d="M3 9h18l-1.5-5h-15zM4 9v11h16V9M9 20v-6h6v6"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
+  map: '<path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4zM8 2v16M16 6v16"/>',
 };
 const icon = (name) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
@@ -90,6 +94,8 @@ const store = {
 const state = {
   password: store.get('hd_pass'),
   get isAdmin() { return !!this.password; },
+  shops: null,      // لیست آرایشگاه‌ها برای صفحهٔ اصلی
+  shopId: null,     // آرایشگاه انتخاب‌شده (از آدرس صفحه)
   pub: null,        // داده برای نمای مشتری (بدون اطلاعات مشتری‌ها)
   admin: null,      // دادهٔ کامل ادمین
   version: 0,       // نسخهٔ داده در دیتابیس، برای جلوگیری از بازنویسی هم‌زمان
@@ -119,27 +125,29 @@ async function api(method, path, body) {
     if (res.status === 401 && path.startsWith('/admin')) {
       setPassword(null);
       state.admin = null;
-      location.hash = '#/';
+      if (state.shopId) location.hash = `#/s/${encodeURIComponent(state.shopId)}`;
     }
     throw Object.assign(new AppError(json.error || 'خطایی رخ داد'), { status: res.status });
   }
   return json;
 }
 
-function emptyData() {
-  return { settings: { shopName: 'آرایشگاه من' }, barbers: [], appointments: [] };
-}
 function normalizeData(d) {
-  const base = emptyData();
   return {
-    settings: { ...base.settings, ...(d && d.settings) },
     barbers: Array.isArray(d?.barbers) ? d.barbers : [],
     appointments: Array.isArray(d?.appointments) ? d.appointments : [],
   };
 }
 
+const shopPath = () => `/admin/shops/${encodeURIComponent(state.shopId)}`;
+
+async function loadShops() {
+  state.shops = (await api('GET', '/shops')).shops;
+}
+
 async function loadAdmin() {
-  const { data, version } = await api('GET', '/admin/data');
+  const { shop, data, version } = await api('GET', `${shopPath()}/data`);
+  state.shop = shop;
   state.admin = normalizeData(data);
   state.version = version;
   return state.admin;
@@ -148,7 +156,7 @@ async function loadAdmin() {
 async function saveAdmin(data) {
   const keepFrom = addDays(todayISO(), -180); // نوبت‌های قدیمی‌تر از ۶ ماه پاک می‌شوند
   data.appointments = data.appointments.filter((a) => a.date >= keepFrom);
-  const { version } = await api('PUT', '/admin/data', { data, version: state.version });
+  const { version } = await api('PUT', `${shopPath()}/data`, { data, version: state.version });
   state.admin = data;
   state.version = version;
 }
@@ -171,7 +179,7 @@ function exportData() {
   const blob = new Blob([JSON.stringify(state.admin, null, 2) + '\n'], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `hairdresser-backup-${todayISO()}.json`;
+  a.download = `${state.shop?.name || 'hairdresser'}-backup-${todayISO()}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -187,7 +195,8 @@ async function importData(file) {
 }
 
 async function loadPublic() {
-  state.pub = await api('GET', '/public');
+  state.pub = await api('GET', `/shops/${encodeURIComponent(state.shopId)}`);
+  state.shop = state.pub.shop;
 }
 
 /* ================================================================ validation */
@@ -318,17 +327,127 @@ function emptyHTML(ic, title, text, action = '') {
 }
 
 function renderTopbar(view) {
-  const shop = (state.admin || state.pub)?.settings?.shopName || 'آرایشگاه';
-  $('#shopName').textContent = shop;
-  document.title = view === 'admin' ? `پنل مدیریت · ${shop}` : `نوبت‌های خالی · ${shop}`;
+  const shopName = view === 'home' ? 'آرایشگاه‌ها' : state.shop?.name || 'آرایشگاه';
+  const shopHref = `#/s/${encodeURIComponent(state.shopId || '')}`;
+  $('#shopName').textContent = shopName;
+  $('.brand').setAttribute('href', view === 'home' ? '#/' : shopHref);
+  document.title = view === 'home' ? 'آرایشگاه‌ها · نوبت‌دهی آنلاین'
+    : view === 'admin' ? `پنل مدیریت · ${shopName}` : `نوبت‌های خالی · ${shopName}`;
   const dark = document.documentElement.dataset.theme === 'dark';
   const themeBtn = `<button class="btn icon-btn" data-action="theme" title="${dark ? 'تم روشن' : 'تم تیره'}" aria-label="تغییر تم">${icon(dark ? 'sun' : 'moon')}</button>`;
-  $('#topActions').innerHTML = view === 'admin'
-    ? `${themeBtn}
-       <a class="btn" href="#/" title="نمای مشتری">${icon('eye')}<span class="btn-label-sm">نمای مشتری</span></a>
-       <button class="btn btn-ghost icon-btn" data-action="logout" title="خروج">${icon('logout')}</button>`
-    : `${themeBtn}
-       <button class="btn btn-primary" data-action="admin">${icon('lock')}<span>ادمین</span></button>`;
+  const homeBtn = `<a class="btn icon-btn" href="#/" title="همهٔ آرایشگاه‌ها" aria-label="همهٔ آرایشگاه‌ها">${icon('home')}</a>`;
+  const logoutBtn = `<button class="btn btn-ghost icon-btn" data-action="logout" title="خروج">${icon('logout')}</button>`;
+  const adminBtn = `<button class="btn btn-primary" data-action="admin">${icon('lock')}<span>ادمین</span></button>`;
+  let actions;
+  if (view === 'home') actions = `${themeBtn}${state.isAdmin ? logoutBtn : adminBtn}`;
+  else if (view === 'admin') actions = `${themeBtn}${homeBtn}<a class="btn" href="${shopHref}" title="نمای مشتری">${icon('eye')}<span class="btn-label-sm">نمای مشتری</span></a>${logoutBtn}`;
+  else actions = `${themeBtn}${homeBtn}${adminBtn}`;
+  $('#topActions').innerHTML = actions;
+}
+
+function locationHTML(loc) {
+  if (!loc) return '';
+  const isUrl = /^https?:\/\//i.test(loc);
+  const href = isUrl ? loc : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc)}`;
+  return `<span class="loc">${icon('pin')}${isUrl ? '' : `<span>${esc(fa(loc))}</span>`}
+    <a class="link" href="${esc(href)}" target="_blank" rel="noopener">نمایش روی نقشه</a></span>`;
+}
+
+/* ================================================================ home (shops) */
+function renderHome() {
+  renderTopbar('home');
+  const shops = state.shops;
+  const addBtn = state.isAdmin ? `<button class="btn btn-primary" data-action="new-shop">${icon('plus')}افزودن آرایشگاه</button>` : '';
+
+  let body;
+  if (!shops.length) {
+    body = `<div class="card">${emptyHTML('store', 'هنوز آرایشگاهی ثبت نشده',
+      state.isAdmin ? 'اولین آرایشگاه را با نام و لوکیشن ثبت کنید.' : 'برای افزودن آرایشگاه وارد پنل مدیریت شوید.',
+      state.isAdmin ? addBtn : `<button class="btn btn-primary" data-action="admin">${icon('lock')}ورود مدیر</button>`)}</div>`;
+  } else {
+    body = `
+      ${shops.length > 3 ? `<div class="search">${icon('search')}<input class="input" id="shopSearch" placeholder="جستجوی نام یا محله…" autocomplete="off"></div>` : ''}
+      <div class="shop-list" id="shopList">
+        ${shops.map((x) => `
+          <div class="shop-card" data-action="open-shop" data-id="${esc(x.id)}" data-q="${esc((x.name + ' ' + x.location).toLowerCase())}" role="link" tabindex="0">
+            <span class="shop-icon">${icon('store')}</span>
+            <div class="info">
+              <div class="name">${esc(x.name)}</div>
+              <div class="sub">${icon('pin')}<span>${/^https?:\/\//i.test(x.location) ? 'لوکیشن روی نقشه' : esc(fa(x.location || '—'))}</span></div>
+              <div class="sub">${icon('users')}<span>${x.barbers ? `${fa(x.barbers)} آرایشگر` : 'بدون آرایشگر'}</span></div>
+            </div>
+            ${state.isAdmin ? `<div class="shop-actions">
+              <button class="btn icon-btn sm" data-action="edit-shop" data-id="${esc(x.id)}" title="ویرایش">${icon('edit')}</button>
+              <button class="btn icon-btn sm btn-danger" data-action="del-shop" data-id="${esc(x.id)}" title="حذف">${icon('trash')}</button>
+            </div>` : `<span class="chev">${icon('left')}</span>`}
+          </div>`).join('')}
+      </div>
+      <div class="card hidden" id="shopNone">${emptyHTML('search', 'آرایشگاهی پیدا نشد', 'عبارت دیگری را جستجو کنید.')}</div>`;
+  }
+
+  $('#app').innerHTML = `
+    <div class="page">
+      <div class="admin-head">
+        <section class="hero" style="padding:0">
+          <h1>آرایشگاه موردنظر را انتخاب کنید</h1>
+          <p>زمان‌های خالی هر آرایشگاه را ببینید و برای رزرو تماس بگیرید.</p>
+        </section>
+        ${shops.length ? addBtn : ''}
+      </div>
+      <div style="margin-top:20px">${body}</div>
+    </div>`;
+
+  const search = $('#shopSearch');
+  if (search) search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    let shown = 0;
+    $$('#shopList .shop-card').forEach((c) => { const ok = !q || c.dataset.q.includes(q); c.classList.toggle('hidden', !ok); shown += ok; });
+    $('#shopNone').classList.toggle('hidden', shown > 0);
+  });
+}
+
+function openShopModal(shop) {
+  openModal(`
+    <div class="modal sm" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>${shop ? 'ویرایش آرایشگاه' : 'آرایشگاه جدید'}</h2>
+        <button class="btn btn-ghost icon-btn sm" data-action="close" aria-label="بستن">${icon('x')}</button>
+      </div>
+      <form class="modal-body" id="shopForm" autocomplete="off">
+        <div class="field">
+          <label for="sName">نام آرایشگاه</label>
+          <input class="input" id="sName" required maxlength="60" value="${esc(shop?.name || '')}" placeholder="مثلاً آرایشگاه رضا">
+        </div>
+        <div class="field">
+          <label for="sLoc">لوکیشن</label>
+          <textarea class="input" id="sLoc" required maxlength="300" rows="3" placeholder="آدرس، یا لینک لوکیشن از گوگل‌مپ / نشان / بلد">${esc(shop?.location || '')}</textarea>
+          <span class="hint">آدرس متنی یا لینک نقشه؛ برای مشتری‌ها با دکمهٔ «نمایش روی نقشه» نشان داده می‌شود.</span>
+        </div>
+      </form>
+      <div class="modal-foot">
+        <button class="btn btn-primary btn-lg" id="shopSave">${icon('check')}${shop ? 'ذخیرهٔ تغییرات' : 'ثبت آرایشگاه'}</button>
+        <button class="btn btn-lg" data-action="close">انصراف</button>
+      </div>
+    </div>`);
+  const save = $('#shopSave');
+  $('#shopForm').addEventListener('submit', (ev) => { ev.preventDefault(); save.click(); });
+  save.addEventListener('click', async () => {
+    const payload = { name: $('#sName').value.trim(), location: $('#sLoc').value.trim() };
+    if (!payload.name) { $('#sName').focus(); toast('نام آرایشگاه را وارد کنید', true); return; }
+    if (!payload.location) { $('#sLoc').focus(); toast('لوکیشن آرایشگاه را وارد کنید', true); return; }
+    save.disabled = true;
+    try {
+      if (shop) await api('PUT', `/admin/shops/${encodeURIComponent(shop.id)}`, payload);
+      else await api('POST', '/admin/shops', payload);
+      closeModal();
+      toast(shop ? 'تغییرات ذخیره شد' : 'آرایشگاه ثبت شد');
+      render();
+    } catch (err) {
+      toast(err.message, true);
+      save.disabled = false;
+    }
+  });
+  setTimeout(() => $('#sName').focus(), 60);
 }
 
 /* ================================================================ customer view */
@@ -344,7 +463,9 @@ function renderUser() {
   if (state.date < todayISO()) state.date = todayISO();
 
   if (!barbers.length) {
-    $('#app').innerHTML = `<div class="page"><div class="card">${emptyHTML('scissors', 'هنوز آرایشگری ثبت نشده', 'به‌زودی زمان‌های خالی اینجا نمایش داده می‌شود.')}</div></div>`;
+    $('#app').innerHTML = `<div class="page">
+      <section class="hero"><h1>${esc(state.shop.name)}</h1>${locationHTML(state.shop.location)}</section>
+      <div class="card" style="margin-top:20px">${emptyHTML('scissors', 'هنوز آرایشگری ثبت نشده', 'به‌زودی زمان‌های خالی اینجا نمایش داده می‌شود.')}</div></div>`;
     return;
   }
 
@@ -368,7 +489,8 @@ function renderUser() {
   $('#app').innerHTML = `
   <div class="page">
     <section class="hero">
-      <h1>نوبت‌های خالی را ببینید</h1>
+      <h1>${esc(state.shop.name)}</h1>
+      ${locationHTML(state.shop.location)}
       <p>آرایشگر و روز دلخواه را انتخاب کنید و برای رزرو نوبت تماس بگیرید.</p>
     </section>
 
@@ -425,7 +547,7 @@ function renderUser() {
 }
 
 /* ================================================================ login */
-function openLogin() {
+function openLogin(next) {
   openModal(`
     <div class="modal sm" role="dialog" aria-modal="true">
       <div class="modal-head"><span></span><button class="btn btn-ghost icon-btn sm" data-action="close" aria-label="بستن">${icon('x')}</button></div>
@@ -448,7 +570,8 @@ function openLogin() {
               (e) => { throw e instanceof AppError ? e : new AppError('ارتباط با سرور برقرار نشد'); });
       setPassword(password);
       closeModal();
-      location.hash = '#/admin';
+      if (next && location.hash !== next) location.hash = next;
+      else render();
     } catch (err) {
       pin.value = '';
       const form = $('#loginForm');
@@ -568,7 +691,7 @@ function hoursSummary(b) {
 }
 
 function adminBarbersHTML() {
-  const { barbers, settings } = state.admin;
+  const { barbers } = state.admin;
   const list = barbers.length
     ? `<div class="barber-cards">${barbers.map((b) => `
         <div class="card barber-row">
@@ -595,15 +718,17 @@ function adminBarbersHTML() {
     </div>
     ${list}
 
-    <div class="section-title"><span>تنظیمات آرایشگاه</span></div>
+    <div class="section-title"><span>اطلاعات آرایشگاه</span></div>
     <form class="card" id="settingsForm">
-      <div class="field" style="margin-bottom:12px">
+      <div class="field">
         <label for="shopInput">نام آرایشگاه</label>
-        <div class="row">
-          <input class="input" id="shopInput" value="${esc(settings.shopName)}" maxlength="60">
-          <button class="btn btn-primary">${icon('check')}ذخیره</button>
-        </div>
+        <input class="input" id="shopInput" value="${esc(state.shop.name)}" maxlength="60" required>
       </div>
+      <div class="field">
+        <label for="locInput">لوکیشن</label>
+        <textarea class="input" id="locInput" rows="2" maxlength="300" required placeholder="آدرس یا لینک نقشه">${esc(state.shop.location)}</textarea>
+      </div>
+      <button class="btn btn-primary">${icon('check')}ذخیره</button>
     </form>
 
     <div class="section-title"><span>نسخهٔ پشتیبان</span></div>
@@ -942,14 +1067,34 @@ document.addEventListener('click', async (ev) => {
   switch (action) {
     case 'theme': return toggleTheme();
     case 'close': return closeModal();
-    case 'admin':
-      if (state.isAdmin) location.hash = '#/admin';
-      else openLogin();
+    case 'admin': {
+      const next = route().view === 'home' ? '#/' : `#/s/${encodeURIComponent(state.shopId)}/admin`;
+      if (state.isAdmin) { if (location.hash !== next) location.hash = next; }
+      else openLogin(next);
       return;
-    case 'logout':
-      setPassword(null); state.admin = null; location.hash = '#/';
+    }
+    case 'logout': {
+      setPassword(null); state.admin = null;
+      const r = route();
+      if (r.view === 'admin') location.hash = `#/s/${encodeURIComponent(state.shopId)}`;
+      else render();
       toast('از پنل مدیریت خارج شدید');
       return;
+    }
+    case 'open-shop':
+      location.hash = `#/s/${encodeURIComponent(el.dataset.id)}`;
+      return;
+    case 'new-shop':
+      return openShopModal(null);
+    case 'edit-shop':
+      return openShopModal(state.shops.find((x) => x.id === el.dataset.id));
+    case 'del-shop': {
+      const sh = state.shops.find((x) => x.id === el.dataset.id);
+      if (!sh || !(await confirmDialog('حذف آرایشگاه', `آرایشگاه «${esc(sh.name)}» با همهٔ آرایشگرها و نوبت‌هایش حذف می‌شود. ادامه می‌دهید؟`))) return;
+      try { await api('DELETE', `/admin/shops/${encodeURIComponent(sh.id)}`); toast('آرایشگاه حذف شد'); render(); }
+      catch (err) { toast(err.message, true); }
+      return;
+    }
     case 'pick-barber':
       state.barberId = el.dataset.id; store.set('hd_barber', state.barberId);
       return render(false);
@@ -1006,9 +1151,9 @@ document.addEventListener('submit', async (ev) => {
   if (ev.target.id !== 'settingsForm') return;
   ev.preventDefault();
   try {
-    const shopName = $('#shopInput').value.trim() || 'آرایشگاه من';
-    await mutate((data) => { data.settings.shopName = shopName; });
-    toast('تنظیمات ذخیره شد');
+    state.shop = await api('PUT', `/admin/shops/${encodeURIComponent(state.shopId)}`,
+      { name: $('#shopInput').value.trim(), location: $('#locInput').value.trim() });
+    toast('اطلاعات آرایشگاه ذخیره شد');
     renderAdmin();
   } catch (err) { toast(err.message, true); }
 });
@@ -1027,24 +1172,41 @@ document.addEventListener('change', async (ev) => {
 
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && modalOpen()) closeModal();
+  if (ev.key === 'Enter' && ev.target.matches?.('.shop-card')) ev.target.click();
 });
 
 /* ================================================================ router */
+// #/ لیست آرایشگاه‌ها · #/s/<id> نمای مشتری · #/s/<id>/admin پنل مدیریت
+function route() {
+  const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
+  if (parts[0] === 's' && parts[1]) return { view: parts[2] === 'admin' ? 'admin' : 'user', shopId: decodeURIComponent(parts[1]) };
+  return { view: 'home' };
+}
+
 async function render(reload = true) {
-  const admin = location.hash.startsWith('#/admin');
+  const r = route();
   try {
-    if (admin) {
-      if (!state.isAdmin) { state.pendingLogin = true; location.hash = '#/'; return; }
+    if (r.view === 'home') {
+      if (reload || !state.shops) await loadShops();
+      renderHome();
+      return;
+    }
+    if (state.shopId !== r.shopId) { state.shopId = r.shopId; state.pub = null; state.admin = null; state.shop = null; }
+    if (r.view === 'admin') {
+      if (!state.isAdmin) { state.pendingLogin = true; location.hash = `#/s/${encodeURIComponent(r.shopId)}`; return; }
       if (reload || !state.admin) await loadAdmin();
       renderAdmin();
     } else {
       if (reload || !state.pub) await loadPublic();
       renderUser();
-      if (state.pendingLogin) { state.pendingLogin = false; openLogin(); }
+      if (state.pendingLogin) { state.pendingLogin = false; openLogin(`#/s/${encodeURIComponent(r.shopId)}/admin`); }
     }
   } catch (err) {
-    renderTopbar(admin ? 'admin' : 'user');
-    $('#app').innerHTML = `<div class="page"><div class="card">${emptyHTML('alert', 'خطا در بارگذاری', esc(err.message), '<button class="btn btn-primary" onclick="render()">تلاش دوباره</button>')}</div></div>`;
+    renderTopbar(r.view);
+    const back = r.view === 'home'
+      ? '<button class="btn btn-primary" onclick="render()">تلاش دوباره</button>'
+      : `<a class="btn btn-primary" href="#/">${icon('home')}همهٔ آرایشگاه‌ها</a>`;
+    $('#app').innerHTML = `<div class="page"><div class="card">${emptyHTML('alert', err.status === 404 ? 'آرایشگاه پیدا نشد' : 'خطا در بارگذاری', esc(err.message), back)}</div></div>`;
   }
 }
 

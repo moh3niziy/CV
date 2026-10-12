@@ -287,6 +287,34 @@ svg { width: 1.15em; height: 1.15em; flex-shrink: 0; }
 .barber-row .meta span { display: inline-flex; gap: 6px; align-items: center; }
 .barber-cards { display: flex; flex-direction: column; gap: 12px; }
 
+/* ================================================================ shops */
+.shop-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.shop-card {
+  display: flex; align-items: center; gap: 14px; padding: 16px; cursor: pointer;
+  background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+  transition: border-color .2s, transform .12s; animation: fade .25s ease;
+}
+.shop-card:hover, .shop-card:focus-visible { border-color: var(--accent); outline: none; }
+.shop-card:active { transform: scale(.99); }
+.shop-card .info { flex: 1; min-width: 0; }
+.shop-card .name { font-weight: 800; font-size: 16px; }
+.shop-card .sub { display: flex; gap: 6px; align-items: flex-start; font-size: 13px; color: var(--muted); }
+.shop-card .sub svg { margin-top: 4px; width: 14px; height: 14px; }
+.shop-card .sub span { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.shop-icon {
+  width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center; flex-shrink: 0;
+  background: var(--accent-soft); color: var(--accent);
+}
+.shop-icon svg { width: 24px; height: 24px; }
+.shop-actions { display: flex; flex-direction: column; gap: 6px; }
+.chev { color: var(--muted); }
+.search { position: relative; margin-bottom: 14px; }
+.search svg { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+.search .input { padding-right: 42px; }
+.loc { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; color: var(--muted); font-size: 14px; margin: 2px 0 4px; }
+.link { color: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+textarea.input { resize: vertical; line-height: 1.8; }
+
 /* ================================================================ forms */
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
 .field > label, .label { font-weight: 600; font-size: 13.5px; }
@@ -404,6 +432,7 @@ svg { width: 1.15em; height: 1.15em; flex-shrink: 0; }
   .grid-2 { grid-template-columns: 1fr; }
 }
 @media (max-width: 600px) {
+  .shop-list { grid-template-columns: 1fr; }
   body { font-size: 14.5px; }
   .page { padding-top: 16px; }
   .card { padding: 16px; }
