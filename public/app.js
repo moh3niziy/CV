@@ -27,6 +27,7 @@ const ICONS = {
   pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
+  power: '<path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>',
   map: '<path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4zM8 2v16M16 6v16"/>',
 };
 const icon = (name) =>
@@ -400,15 +401,16 @@ function renderHome() {
       ${shops.length > 3 ? `<div class="search">${icon('search')}<input class="input" id="shopSearch" placeholder="جستجوی نام یا محله…" autocomplete="off"></div>` : ''}
       <div class="shop-list" id="shopList">
         ${shops.map((x) => `
-          <div class="shop-card" data-action="open-shop" data-id="${esc(x.id)}" data-q="${esc((x.name + ' ' + x.location).toLowerCase())}" role="link" tabindex="0">
+          <div class="shop-card ${x.active === false ? 'inactive' : ''}" data-action="open-shop" data-id="${esc(x.id)}" data-q="${esc((x.name + ' ' + x.location).toLowerCase())}" role="link" tabindex="0">
             <span class="shop-icon">${icon('store')}</span>
             <div class="info">
-              <div class="name">${esc(x.name)}</div>
+              <div class="name">${esc(x.name)}${x.active === false ? ' <span class="badge">غیرفعال</span>' : ''}</div>
               <div class="sub">${icon('pin')}<span>${/^https?:\/\//i.test(x.location) ? 'لوکیشن روی نقشه' : esc(fa(x.location || '—'))}</span></div>
               <div class="sub">${icon('users')}<span>${x.barbers ? `${fa(x.barbers)} آرایشگر` : 'بدون آرایشگر'}</span></div>
             </div>
             ${isSuper() ? `<div class="shop-actions">
               <button class="btn icon-btn sm" data-action="edit-shop" data-id="${esc(x.id)}" title="ویرایش">${icon('edit')}</button>
+              <button class="btn icon-btn sm ${x.active === false ? 'btn-on' : 'btn-warn'}" data-action="toggle-shop" data-id="${esc(x.id)}" title="${x.active === false ? 'فعال کردن' : 'غیرفعال کردن'}">${icon('power')}</button>
               <button class="btn icon-btn sm btn-danger" data-action="del-shop" data-id="${esc(x.id)}" title="حذف">${icon('trash')}</button>
             </div>` : `<span class="chev">${icon('left')}</span>`}
           </div>`).join('')}
@@ -589,7 +591,7 @@ function renderUser() {
 }
 
 /* ================================================================ login */
-// صفحهٔ اصلی: ورود مدیر سایت با رمز · صفحهٔ آرایشگاه: ورود مالک یا آرایشگر با نام کاربری و رمز
+// صفحهٔ اصلی: ورود مدیر سایت · صفحهٔ آرایشگاه: ورود مالک یا آرایشگر؛ هر دو با نام کاربری و رمز
 function openLogin(next) {
   const shopId = route().view === 'home' ? null : state.shopId;
   openModal(`
@@ -598,23 +600,24 @@ function openLogin(next) {
       <form class="modal-body" id="loginForm" style="text-align:center;padding-bottom:24px">
         <div class="login-icon">${icon('lock')}</div>
         <h2 style="margin:0 0 4px;font-size:19px">${shopId ? `ورود به ${esc(state.shop?.name || 'آرایشگاه')}` : 'ورود مدیر سایت'}</h2>
-        <p class="muted" style="margin:0 0 18px">${shopId ? 'مالک یا آرایشگر با نام کاربری و رمز خود وارد شود' : 'رمز عبور مدیر سایت را وارد کنید'}</p>
-        ${shopId ? `<input class="input ltr-input" id="loginUser" placeholder="نام کاربری" autocomplete="username" autocapitalize="none" spellcheck="false" required style="margin-bottom:10px;text-align:center">` : ''}
-        <input class="input ${shopId ? 'ltr-input' : 'pin-input'}" id="pin" type="password" ${shopId ? 'placeholder="رمز عبور" style="text-align:center"' : 'inputmode="numeric"'} autocomplete="current-password" maxlength="64" required>
+        <p class="muted" style="margin:0 0 18px">${shopId ? 'مالک یا آرایشگر با نام کاربری و رمز خود وارد شود' : 'نام کاربری و رمز عبور مدیر سایت را وارد کنید'}</p>
+        <input class="input ltr-input" id="loginUser" placeholder="نام کاربری" autocomplete="username" autocapitalize="none" spellcheck="false" required style="margin-bottom:10px;text-align:center">
+        <input class="input ltr-input" id="pin" type="password" placeholder="رمز عبور" style="text-align:center" autocomplete="current-password" maxlength="64" required>
         <button class="btn btn-primary btn-lg btn-block" style="margin-top:14px">ورود</button>
       </form>
     </div>`);
   const pin = $('#pin');
-  setTimeout(() => ($('#loginUser') || pin).focus(), 50);
+  setTimeout(() => $('#loginUser').focus(), 50);
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = $('#loginForm button');
     btn.disabled = true;
     try {
-      const password = toEn(pin.value);
+      const password = pin.value;
+      const username = toEn($('#loginUser').value).toLowerCase();
       const auth = shopId
-        ? await api('POST', `/shops/${encodeURIComponent(shopId)}/login`, { username: toEn($('#loginUser').value).toLowerCase(), password })
-        : await api('POST', '/login', { password });
+        ? await api('POST', `/shops/${encodeURIComponent(shopId)}/login`, { username, password })
+        : await api('POST', '/login', { username, password });
       setAuth(auth);
       closeModal();
       toast(`خوش آمدید${auth.name ? '، ' + auth.name : ''}`);
@@ -1161,9 +1164,22 @@ document.addEventListener('click', async (ev) => {
       return openShopModal(null);
     case 'edit-shop':
       return openShopModal(state.shops.find((x) => x.id === el.dataset.id));
+    case 'toggle-shop': {
+      const sh = state.shops.find((x) => x.id === el.dataset.id);
+      if (!sh) return;
+      const activate = sh.active === false;
+      if (!activate && !(await confirmDialog('غیرفعال کردن آرایشگاه',
+        `«${esc(sh.name)}» از لیست عمومی پنهان می‌شود و مالک و آرایشگرهایش نمی‌توانند وارد شوند. اطلاعات حذف نمی‌شود و هر وقت بخواهید می‌توانید دوباره فعالش کنید.`, 'غیرفعال کن'))) return;
+      try {
+        await api('PUT', `/admin/shops/${encodeURIComponent(sh.id)}/status`, { active: activate });
+        toast(activate ? 'آرایشگاه فعال شد' : 'آرایشگاه غیرفعال شد');
+        render();
+      } catch (err) { toast(err.message, true); }
+      return;
+    }
     case 'del-shop': {
       const sh = state.shops.find((x) => x.id === el.dataset.id);
-      if (!sh || !(await confirmDialog('حذف آرایشگاه', `آرایشگاه «${esc(sh.name)}» با همهٔ آرایشگرها و نوبت‌هایش حذف می‌شود. ادامه می‌دهید؟`))) return;
+      if (!sh || !(await confirmDialog('حذف آرایشگاه', `آرایشگاه «${esc(sh.name)}» با همهٔ آرایشگرها، حساب‌ها و نوبت‌هایش برای همیشه حذف می‌شود. اگر فقط می‌خواهید موقتاً پنهان شود، غیرفعالش کنید.`))) return;
       try { await api('DELETE', `/admin/shops/${encodeURIComponent(sh.id)}`); toast('آرایشگاه حذف شد'); render(); }
       catch (err) { toast(err.message, true); }
       return;
@@ -1288,7 +1304,7 @@ async function render(reload = true) {
     const back = r.view === 'home'
       ? '<button class="btn btn-primary" onclick="render()">تلاش دوباره</button>'
       : `<a class="btn btn-primary" href="#/">${icon('home')}همهٔ آرایشگاه‌ها</a>`;
-    $('#app').innerHTML = `<div class="page"><div class="card">${emptyHTML('alert', err.status === 404 ? 'آرایشگاه پیدا نشد' : 'خطا در بارگذاری', esc(err.message), back)}</div></div>`;
+    $('#app').innerHTML = `<div class="page"><div class="card">${emptyHTML(err.status === 403 ? 'lock' : 'alert', err.status === 404 ? 'آرایشگاه پیدا نشد' : err.status === 403 ? 'دسترسی ممکن نیست' : 'خطا در بارگذاری', esc(err.message), back)}</div></div>`;
   }
 }
 

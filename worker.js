@@ -2,7 +2,7 @@
 // فایل‌های سایت (پوشهٔ public) را خود Cloudflare سرو می‌کند و فقط مسیرهای /api به این کد می‌رسند.
 //
 // نقش‌ها:
-//   super  — مدیر سایت (رمز ADMIN_PASSWORD): ساخت/حذف آرایشگاه و تعیین مالک
+//   super  — مدیر سایت (Secretهای ADMIN_USERNAME و ADMIN_PASSWORD): ساخت، غیرفعال‌سازی و حذف آرایشگاه و تعیین مالک
 //   owner  — مالک آرایشگاه: مدیریت آرایشگرها، اطلاعات آرایشگاه و همهٔ نوبت‌ها
 //   barber — آرایشگر: فقط نوبت‌های خودش
 //
@@ -75,6 +75,11 @@ async function migrate(db) {
     db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('secret', ?)").bind(randomHex(32)),
   ]);
   secret = (await db.prepare("SELECT value FROM meta WHERE key = 'secret'").first()).value;
+  try {
+    await db.prepare('ALTER TABLE shops ADD COLUMN active INTEGER NOT NULL DEFAULT 1').run();
+  } catch (err) {
+    if (!/duplicate column/i.test(String(err && err.message))) throw err;
+  }
 
   // داده‌های نسخهٔ تک‌آرایشگاهی قبلی به اولین آرایشگاه منتقل می‌شود
   const old = await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'store'").first();
@@ -89,6 +94,21 @@ async function migrate(db) {
 }
 
 /* ---------------------------------------------------------------- auth */
+// اطلاعات ورود مدیر سایت فقط از Secretهای Cloudflare خوانده می‌شود، نه از کد
+function adminCreds(env) {
+  const username = toEn(env.ADMIN_USERNAME).toLowerCase();
+  const password = String(env.ADMIN_PASSWORD ?? '');
+  return username && password ? { username, password } : null;
+}
+async function superMark(env) {
+  const c = adminCreds(env);
+  return c ? (await sha256(`${c.username}:${c.password}`)).slice(-12) : null;
+}
+function isSuperLogin(env, username, password) {
+  const c = adminCreds(env);
+  return !!c && toEn(username).toLowerCase() === c.username && String(password ?? '') === c.password;
+}
+
 async function makeToken(payload) {
   const body = b64url(JSON.stringify({ ...payload, e: Date.now() + TOKEN_DAYS * 864e5 }));
   return `${body}.${await hmac(secret, body)}`;
@@ -102,10 +122,11 @@ async function readAuth(request, env, db) {
   let p;
   try { p = JSON.parse(unb64url(body)); } catch { return null; }
   if (!p || p.e < Date.now()) return null;
-  if (p.r === 'super') return p.h === (await sha256(toEn(env.ADMIN_PASSWORD || '1234'))).slice(-12) ? p : null;
-  const acc = await db.prepare('SELECT pass, role, barber_id FROM accounts WHERE shop_id = ? AND username = ?').bind(p.s, p.u).first();
+  if (p.r === 'super') { const m = await superMark(env); return m && p.h === m ? p : null; }
+  const acc = await db.prepare(`SELECT a.pass, a.role, a.barber_id, s.active FROM accounts a
+    JOIN shops s ON s.id = a.shop_id WHERE a.shop_id = ? AND a.username = ?`).bind(p.s, p.u).first();
   if (!acc || acc.role !== p.r || passMark(acc.pass) !== p.h) return null;
-  return { ...p, b: acc.barber_id };
+  return { ...p, b: acc.barber_id, disabled: !acc.active };
 }
 
 function requireAuth(auth) {
@@ -114,6 +135,7 @@ function requireAuth(auth) {
 function requireShop(auth, shopId, roles) {
   requireAuth(auth);
   if (auth.r === 'super') return;
+  if (auth.disabled) throw new HttpError(403, 'این آرایشگاه غیرفعال شده است');
   if (auth.s !== shopId || !roles.includes(auth.r)) throw new HttpError(403, 'به این بخش دسترسی ندارید');
 }
 
@@ -125,7 +147,6 @@ function newId() {
 function cleanUsername(v) {
   const u = toEn(v).toLowerCase();
   if (!USERNAME_RE.test(u)) throw new HttpError(400, 'نام کاربری باید ۳ تا ۳۲ حرف انگلیسی، عدد یا . _ - باشد');
-  if (u === 'admin') throw new HttpError(400, 'نام کاربری admin رزرو شده است');
   return u;
 }
 function cleanPassword(v) {
@@ -146,9 +167,12 @@ function cleanShop(body) {
 }
 
 async function getShop(db, id) {
-  const row = await db.prepare('SELECT id, name, location, data, version FROM shops WHERE id = ?').bind(id).first();
+  const row = await db.prepare('SELECT id, name, location, data, version, active FROM shops WHERE id = ?').bind(id).first();
   if (!row) throw new HttpError(404, 'آرایشگاه پیدا نشد');
-  return { shop: { id: row.id, name: row.name, location: row.location }, data: JSON.parse(row.data), version: row.version };
+  return {
+    shop: { id: row.id, name: row.name, location: row.location, active: !!row.active },
+    data: JSON.parse(row.data), version: row.version,
+  };
 }
 
 async function usernameTaken(db, shopId, username, except) {
@@ -205,13 +229,17 @@ async function handleApi(request, env, path) {
   await init(db);
   const method = request.method;
   const parts = path.split('/').filter(Boolean).slice(1); // بدون «api»
-  const adminPass = toEn(env.ADMIN_PASSWORD || '1234');
-  const superToken = async () => ({ token: await makeToken({ r: 'super', h: (await sha256(adminPass)).slice(-12) }), role: 'super', name: 'مدیر سایت' });
+  const superToken = async () => ({
+    token: await makeToken({ r: 'super', h: await superMark(env) }),
+    role: 'super', name: String(env.ADMIN_USERNAME || '').trim() || 'مدیر سایت',
+  });
+  const auth = await readAuth(request, env, db);
 
   // ---- ورود مدیر سایت (صفحهٔ اصلی)
   if (method === 'POST' && path === '/api/login') {
-    const { password } = await readJson(request);
-    if (toEn(password) !== adminPass) throw new HttpError(401, 'رمز عبور اشتباه است');
+    const { username, password } = await readJson(request);
+    if (!adminCreds(env)) throw new HttpError(503, 'حساب مدیر سایت در Cloudflare تنظیم نشده است (ADMIN_USERNAME و ADMIN_PASSWORD)');
+    if (!isSuperLogin(env, username, password)) throw new HttpError(401, 'نام کاربری یا رمز عبور اشتباه است');
     return json(await superToken());
   }
 
@@ -219,19 +247,26 @@ async function handleApi(request, env, path) {
   if (parts[0] === 'shops') {
     const id = parts[1];
     if (method === 'GET' && parts.length === 1) {
-      const { results } = await db.prepare(`SELECT id, name, location,
+      // آرایشگاه‌های غیرفعال فقط برای مدیر سایت نمایش داده می‌شوند
+      const all = auth?.r === 'super';
+      const { results } = await db.prepare(`SELECT id, name, location, active,
         COALESCE(json_array_length(data, '$.barbers'), 0) AS barbers
-        FROM shops ORDER BY created_at`).all();
-      return json({ shops: results });
+        FROM shops ${all ? '' : 'WHERE active = 1'} ORDER BY created_at`).all();
+      return json({ shops: results.map((r) => ({ ...r, active: !!r.active })) });
     }
-    if (method === 'GET' && parts.length === 2) return json(publicView(await getShop(db, id)));
+    if (method === 'GET' && parts.length === 2) {
+      const shop = await getShop(db, id);
+      if (!shop.shop.active && auth?.r !== 'super') throw new HttpError(403, 'این آرایشگاه در حال حاضر غیرفعال است');
+      return json(publicView(shop));
+    }
 
     // ورود مالک یا آرایشگر یک آرایشگاه
     if (method === 'POST' && parts[2] === 'login' && parts.length === 3) {
       const { username, password } = await readJson(request);
       const u = toEn(username).toLowerCase();
       const { shop, data } = await getShop(db, id);
-      if (u === 'admin' && toEn(password) === adminPass) return json(await superToken());
+      if (isSuperLogin(env, username, password)) return json(await superToken());
+      if (!shop.active) throw new HttpError(403, 'این آرایشگاه غیرفعال شده است');
       const acc = await db.prepare('SELECT username, pass, role, barber_id FROM accounts WHERE shop_id = ? AND username = ?').bind(id, u).first();
       if (!acc || !(await checkPassword(toEn(password), acc.pass))) throw new HttpError(401, 'نام کاربری یا رمز عبور اشتباه است');
       const name = acc.role === 'owner' ? `مالک ${shop.name}` : (data.barbers.find((b) => b.id === acc.barber_id)?.name || acc.username);
@@ -245,7 +280,6 @@ async function handleApi(request, env, path) {
 
   // ---- بخش‌های نیازمند ورود
   if (parts[0] !== 'admin' || parts[1] !== 'shops') throw new HttpError(404, 'مسیر پیدا نشد');
-  const auth = await readAuth(request, env, db);
   const id = parts[2];
 
   // ساخت آرایشگاه + مالک (فقط مدیر سایت)
@@ -333,6 +367,16 @@ async function handleApi(request, env, path) {
       if (!res.meta.changes) throw new HttpError(409, 'داده‌ها هم‌زمان از دستگاه دیگری تغییر کرده است');
       return json({ version: version + 1 });
     }
+  }
+
+  // فعال یا غیرفعال کردن آرایشگاه (فقط مدیر سایت)
+  if (id && parts[3] === 'status' && parts.length === 4 && method === 'PUT') {
+    requireAuth(auth);
+    if (auth.r !== 'super') throw new HttpError(403, 'فقط مدیر سایت می‌تواند آرایشگاه را غیرفعال کند');
+    const { active } = await readJson(request);
+    const res = await db.prepare('UPDATE shops SET active = ? WHERE id = ?').bind(active ? 1 : 0, id).run();
+    if (!res.meta.changes) throw new HttpError(404, 'آرایشگاه پیدا نشد');
+    return json({ id, active: !!active });
   }
 
   // نام کاربری و رمز آرایشگر (مالک یا مدیر سایت)
