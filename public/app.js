@@ -656,6 +656,7 @@ function renderAdmin() {
         </div>
         ${barbers.length && canManage() ? tabs : ''}
       </div>
+      ${state.shop?.active === false ? `<div class="alert alert-warn" style="margin-top:16px">${icon('alert')}<span>این آرایشگاه غیرفعال است؛ ثبت نوبت جدید ممکن نیست. نوبت‌های قبلی را می‌توانید ویرایش یا حذف کنید.</span></div>` : ''}
       ${body}
     </div>`;
   scrollActiveDay();
@@ -670,10 +671,15 @@ function adminScheduleHTML() {
   const isToday = state.date === todayISO();
   const now = nowMin();
 
+  const locked = state.shop?.active === false; // آرایشگاه غیرفعال: ثبت نوبت جدید ممکن نیست
+
   // ترکیب نوبت‌ها و بازه‌های خالی به ترتیب زمان
   const items = [
     ...plan.list.map((a) => ({ t: toMin(a.start), html: apptHTML(a, plan, isToday && toMin(a.end) <= now || state.date < todayISO()) })),
-    ...plan.gaps.map(([s, e]) => ({ t: s, html: `
+    ...plan.gaps.map(([s, e]) => ({ t: s, html: locked ? `
+      <div class="gap locked">
+        <span class="g-info">${icon('clock')} ${faTime(s)} تا ${faTime(e)} <small>${fmtDur(e - s)} خالی</small></span>
+      </div>` : `
       <button class="gap" data-action="new-appt" data-start="${fromMin(s)}">
         <span class="g-info">${icon('clock')} ${faTime(s)} تا ${faTime(e)} <small>${fmtDur(e - s)} خالی</small></span>
         <span class="g-add">${icon('plus')}<span class="btn-label-sm">ثبت نوبت</span></span>
@@ -682,7 +688,7 @@ function adminScheduleHTML() {
 
   let agenda;
   if (items.length) agenda = `<div class="agenda">${items.map((i) => i.html).join('')}</div>`;
-  else if (plan.closed) agenda = `<div class="card">${emptyHTML('coffee', 'روز تعطیل', `${esc(b.name)} در این روز کار نمی‌کند. در صورت نیاز همچنان می‌توانید نوبت ثبت کنید.`, `<button class="btn btn-primary" data-action="new-appt">${icon('plus')}ثبت نوبت</button>`)}</div>`;
+  else if (plan.closed) agenda = `<div class="card">${emptyHTML('coffee', 'روز تعطیل', `${esc(b.name)} در این روز کار نمی‌کند. ${locked ? '' : ' در صورت نیاز همچنان می‌توانید نوبت ثبت کنید.'}`, locked ? '' : `<button class="btn btn-primary" data-action="new-appt">${icon('plus')}ثبت نوبت</button>`)}</div>`;
   else agenda = `<div class="card">${emptyHTML('calendar', 'روز کاملاً پر است', 'زمان خالی در ساعت کاری باقی نمانده است.')}</div>`;
 
   return `
@@ -712,7 +718,7 @@ function adminScheduleHTML() {
     <div class="section-title"><span>برنامهٔ روز</span><span class="muted">${plan.closed ? '' : `ساعت کاری ${faTime(plan.open)} تا ${faTime(plan.close)}`}</span></div>
     ${agenda}
 
-    <button class="btn btn-primary fab" data-action="new-appt">${icon('plus')}نوبت جدید</button>`;
+    ${locked ? '' : `<button class="btn btn-primary fab" data-action="new-appt">${icon('plus')}نوبت جدید</button>`}`;
 }
 
 function apptHTML(a, plan, past) {
@@ -826,6 +832,7 @@ function setTime(root, name, value) {
 
 /* ================================================================ appointment modal */
 function openApptModal(appt, presetStart) {
+  if (!appt && state.shop?.active === false) { toast('این آرایشگاه غیرفعال است و نوبت جدید ثبت نمی‌شود', true); return; }
   const { barbers, appointments } = state.admin;
   const b = barbers.find((x) => x.id === (appt?.barberId || state.barberId));
   if (!b) return;

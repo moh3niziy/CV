@@ -342,6 +342,13 @@ async function handleApi(request, env, path) {
         throw new HttpError(400, 'درخواست نامعتبر است');
       }
       if (version !== cur.version) throw new HttpError(409, 'داده‌ها هم‌زمان از دستگاه دیگری تغییر کرده است');
+      // آرایشگاه غیرفعال نوبت جدید نمی‌پذیرد (حتی از مدیر سایت)؛ ویرایش و حذف نوبت‌های قبلی آزاد است
+      if (!cur.shop.active) {
+        const known = new Set(cur.data.appointments.map((a) => a.id));
+        if (data.appointments.some((a) => !known.has(a.id))) {
+          throw new HttpError(403, 'این آرایشگاه غیرفعال است و نوبت جدید ثبت نمی‌شود');
+        }
+      }
       let next;
       if (auth.r === 'barber') {
         // آرایشگر نمی‌تواند آرایشگرها یا نوبت‌های دیگران را تغییر دهد
