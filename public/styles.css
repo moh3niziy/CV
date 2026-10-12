@@ -95,7 +95,7 @@ svg { width: 1.15em; height: 1.15em; flex-shrink: 0; }
 .brand-icon.holding { transform: scale(.94); transition: transform 2s linear; }
 .brand-icon.holding::after { opacity: 1; animation: hold 2s linear forwards; }
 @keyframes hold { from { --hold: 0%; } to { --hold: 100%; } }
-.topbar-actions { display: flex; gap: 8px; align-items: center; }
+.topbar-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
 
 /* ================================================================ buttons */
 .btn {
@@ -371,24 +371,18 @@ svg { width: 1.15em; height: 1.15em; flex-shrink: 0; }
 .search { position: relative; margin-bottom: 14px; }
 .search svg { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); }
 .search .input { padding-right: 42px; }
-.loc { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; color: var(--muted); font-size: 14px; margin: 2px 0 4px; }
 .link { color: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 textarea.input { resize: vertical; line-height: 1.8; }
 
-/* ================================================================ social */
-.socials { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 10px; }
-.social {
-  display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px 6px 12px; border-radius: 999px;
-  font-size: 13.5px; font-weight: 700; border: 1.5px solid var(--border); background: var(--surface);
-  transition: border-color .2s, transform .12s;
-}
-.social:active { transform: scale(.97); }
-.social.ig { color: #d62976; }
-.social.ig:hover { border-color: #d62976; }
-.social.tg { color: #229ed9; }
-.social.tg:hover { border-color: #229ed9; }
-[data-theme="dark"] .social.ig { color: #f472b6; }
-[data-theme="dark"] .social.tg { color: #5ec2f0; }
+/* ================================================================ shop links (topbar) */
+.top-link.loc { color: var(--busy); }
+.top-link.tg { color: #229ed9; }
+.top-link.ig { color: #d62976; }
+[data-theme="dark"] .top-link.tg { color: #5ec2f0; }
+[data-theme="dark"] .top-link.ig { color: #f472b6; }
+.top-link.loc:hover { border-color: var(--busy); }
+.top-link.tg:hover { border-color: #229ed9; }
+.top-link.ig:hover { border-color: #d62976; }
 .field label svg { width: 15px; height: 15px; vertical-align: -2px; }
 
 /* ================================================================ accounts */

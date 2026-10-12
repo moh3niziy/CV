@@ -439,16 +439,24 @@ function renderTopbar(view) {
   const who = state.auth ? `<span class="who">${icon('user')}<span>${esc(state.auth.name || '')}</span></span>` : '';
   if (view === 'home') actions = `${themeBtn}${isSuper() ? `${who}${logoutBtn}` : ''}`;
   else if (view === 'admin') actions = `${who}${themeBtn}<a class="btn" href="${shopHref}" title="نمای مشتری">${icon('eye')}<span class="btn-label-sm">نمای مشتری</span></a>${logoutBtn}`;
-  else actions = themeBtn;
+  else actions = `${shopLinksHTML(state.shop)}${themeBtn}`;
   $('#topActions').innerHTML = actions;
 }
 
-function locationHTML(loc) {
-  if (!loc) return '';
-  const isUrl = /^https?:\/\//i.test(loc);
-  const href = isUrl ? loc : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc)}`;
-  return `<span class="loc">${icon('pin')}${isUrl ? '' : `<span>${esc(fa(loc))}</span>`}
-    <a class="link" href="${esc(href)}" target="_blank" rel="noopener">نمایش روی نقشه</a></span>`;
+// آیکون‌های لوکیشن، تلگرام و اینستاگرام در نوار بالای صفحهٔ مشتری (فقط مواردی که ثبت شده‌اند)
+function shopLinksHTML(shop) {
+  if (!shop) return '';
+  const link = (cls, href, ic, label) =>
+    `<a class="btn icon-btn top-link ${cls}" href="${esc(href)}" target="_blank" rel="noopener" title="${label}" aria-label="${label}">${icon(ic)}</a>`;
+  let html = '';
+  if (shop.location) {
+    const href = /^https?:\/\//i.test(shop.location) ? shop.location
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(shop.location)}`;
+    html += link('loc', href, 'pin', /^https?:/i.test(shop.location) ? 'لوکیشن روی نقشه' : `لوکیشن: ${shop.location}`);
+  }
+  if (shop.telegram) html += link('tg', `https://t.me/${encodeURIComponent(shop.telegram)}`, 'telegram', 'تلگرام');
+  if (shop.instagram) html += link('ig', `https://instagram.com/${encodeURIComponent(shop.instagram)}`, 'instagram', 'اینستاگرام');
+  return html;
 }
 
 /* ================================================================ credentials fields */
@@ -471,13 +479,6 @@ function credFieldsHTML(prefix, username, passRequired, title) {
 }
 
 /* ================================================================ social pages */
-function socialHTML(shop) {
-  const links = [];
-  if (shop?.instagram) links.push(`<a class="social ig" href="https://instagram.com/${encodeURIComponent(shop.instagram)}" target="_blank" rel="noopener">${icon('instagram')}<span>اینستاگرام</span></a>`);
-  if (shop?.telegram) links.push(`<a class="social tg" href="https://t.me/${encodeURIComponent(shop.telegram)}" target="_blank" rel="noopener">${icon('telegram')}<span>تلگرام</span></a>`);
-  return links.length ? `<div class="socials">${links.join('')}</div>` : '';
-}
-
 function socialFieldsHTML(prefix, shop) {
   return `
     <div class="row cred-row">
@@ -621,7 +622,7 @@ function renderUser() {
 
   if (!barbers.length) {
     $('#app').innerHTML = `<div class="page">
-      <section class="hero"><h1>${esc(state.shop.name)}</h1>${locationHTML(state.shop.location)}${socialHTML(state.shop)}</section>
+      <section class="hero"><h1>${esc(state.shop.name)}</h1></section>
       <div class="card" style="margin-top:20px">${emptyHTML('scissors', 'هنوز آرایشگری ثبت نشده', 'به‌زودی زمان‌های خالی اینجا نمایش داده می‌شود.')}</div></div>`;
     return;
   }
@@ -647,8 +648,6 @@ function renderUser() {
   <div class="page">
     <section class="hero">
       <h1>${esc(state.shop.name)}</h1>
-      ${locationHTML(state.shop.location)}
-      ${socialHTML(state.shop)}
       <p>آرایشگر و روز دلخواه را انتخاب کنید و برای رزرو نوبت تماس بگیرید.</p>
     </section>
 
