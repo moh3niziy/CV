@@ -437,7 +437,7 @@ function renderTopbar(view) {
   $('#shopName').textContent = shopName;
   $('.brand').setAttribute('href', view === 'home' ? '#/' : shopHref);
   document.title = view === 'home' ? 'آرایشگاه‌ها · نوبت‌دهی آنلاین'
-    : view === 'admin' ? `پنل مدیریت · ${shopName}` : `نوبت‌های خالی · ${shopName}`;
+    : view === 'admin' ? `پنل مدیریت · ${shopName}` : shopName;
   const dark = document.documentElement.dataset.theme === 'dark';
   const themeBtn = `<button class="btn icon-btn" data-action="theme" title="${dark ? 'تم روشن' : 'تم تیره'}" aria-label="تغییر تم">${icon(dark ? 'sun' : 'moon')}</button>`;
   const logoutBtn = `<button class="btn btn-ghost icon-btn" data-action="logout" title="خروج">${icon('logout')}</button>`;
@@ -655,17 +655,16 @@ function renderUser() {
   <div class="page">
     <section class="hero">
       <h1>${esc(state.shop.name)}</h1>
-      <p>آرایشگر و روز دلخواه را انتخاب کنید و برای رزرو نوبت تماس بگیرید.</p>
     </section>
 
-    <div class="section-title"><span>انتخاب آرایشگر</span></div>
+    ${barbers.length > 1 ? `<div class="section-title"><span>انتخاب آرایشگر</span></div>
     <div class="barber-list">
       ${barbers.map((x) => `
         <button class="barber-pick ${x.id === b.id ? 'active' : ''}" data-action="pick-barber" data-id="${x.id}">
           ${avatar(x)}
           <div><div class="name">${esc(x.name)}</div><div class="sub">${fa(x.services.length)} خدمت</div></div>
         </button>`).join('')}
-    </div>
+    </div>` : ''}
 
     <div class="section-title"><span>انتخاب روز</span></div>
     ${dateStripHTML(b, busy, { from: todayISO(), days: 21, admin: false })}
