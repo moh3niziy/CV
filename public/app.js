@@ -1511,8 +1511,10 @@ const domainShop = DOMAIN_SHOPS[location.hostname.replace(/^www\./, '')] || null
 function route() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   if (parts[0] === 's' && parts[1]) return { view: parts[2] === 'admin' ? 'admin' : 'user', shopId: decodeURIComponent(parts[1]) };
-  if (domainShop) return { view: 'user', shopId: domainShop };
-  return { view: 'home' };
+  // moghadamsbz.ir/admin → پنل همان آرایشگاه · آدرس اصلی/admin → ورود مدیر سایت
+  const adminPath = /^\/admin\/?$/.test(location.pathname);
+  if (domainShop) return { view: adminPath ? 'admin' : 'user', shopId: domainShop };
+  return { view: 'home', adminEntry: adminPath };
 }
 
 async function render(reload = true) {
@@ -1521,6 +1523,7 @@ async function render(reload = true) {
     if (r.view === 'home') {
       if (reload || !state.shops) await loadShops();
       renderHome();
+      if (r.adminEntry && !isSuper() && !state.adminEntryShown) { state.adminEntryShown = true; openLogin('#/'); }
       return;
     }
     if (state.shopId !== r.shopId) { state.shopId = r.shopId; state.pub = null; state.admin = null; state.shop = null; }

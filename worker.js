@@ -475,6 +475,10 @@ export default {
         return json({ error: 'خطای سرور: ' + (err && err.message) }, 500);
       }
     }
+    // آدرس /admin همان صفحهٔ اصلی سایت است؛ app.js آن را به پنل مدیریت می‌برد
+    if (path === '/admin' || path === '/admin/') {
+      return env.ASSETS.fetch(new Request(new URL('/', request.url), request));
+    }
     return env.ASSETS.fetch(request);
   },
 };
