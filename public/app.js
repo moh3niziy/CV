@@ -1495,9 +1495,17 @@ function goAdmin() {
 
 /* ================================================================ router */
 // #/ لیست آرایشگاه‌ها · #/s/<id> نمای مشتری · #/s/<id>/admin پنل مدیریت
+// دامنهٔ اختصاصی هر آرایشگاه: باز کردن این دامنه‌ها مستقیم صفحهٔ همان آرایشگاه را نشان می‌دهد
+// و لیست آرایشگاه‌ها از آن‌ها در دسترس نیست
+const DOMAIN_SHOPS = {
+  'moghadamsbz.ir': '74260cf61a', // پیرایش مقدم
+};
+const domainShop = DOMAIN_SHOPS[location.hostname.replace(/^www\./, '')] || null;
+
 function route() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   if (parts[0] === 's' && parts[1]) return { view: parts[2] === 'admin' ? 'admin' : 'user', shopId: decodeURIComponent(parts[1]) };
+  if (domainShop) return { view: 'user', shopId: domainShop };
   return { view: 'home' };
 }
 
