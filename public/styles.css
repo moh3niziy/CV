@@ -209,6 +209,10 @@ svg { width: 1.15em; height: 1.15em; flex-shrink: 0; }
 }
 .tl-busy { background: var(--busy); color: #fff; border-inline: 1.5px solid var(--surface); }
 [data-theme="dark"] .tl-busy { color: #1a0d0e; }
+/* نوبت گذشته در پنل مدیریت: قرمز کم‌رنگ با هاشور */
+.tl-was {
+  background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--busy) 55%, transparent) 0 6px, color-mix(in srgb, var(--busy) 30%, transparent) 6px 12px);
+}
 .tl-past {
   color: var(--muted);
   background: repeating-linear-gradient(-45deg, var(--past) 0 6px, transparent 6px 12px);

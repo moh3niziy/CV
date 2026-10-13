@@ -301,14 +301,17 @@ function dayPlan(barber, date, appts, { fromNow = false } = {}) {
 }
 
 // نوار زمانی روز: بخش‌های خالی، رزرو و گذشته روی یک خط‌کش ساعت، به‌همراه نشانگر «الان».
-// زمان از راست به چپ جلو می‌رود. در نمای مشتری (showPast) یک جملهٔ وضعیت هم بالای نوار نمایش داده می‌شود.
-function timelineHTML(plan, showPast) {
+// زمان از راست به چپ جلو می‌رود و زمان گذشته هاشور می‌خورد (روزهای گذشته کامل).
+// نمای مشتری (customer): جملهٔ وضعیت بالای نوار، و نوبت‌های گذشته هم فقط «گذشته» نمایش داده می‌شوند.
+// پنل مدیریت: نوبت‌های گذشته کم‌رنگ ولی قابل تشخیص می‌مانند.
+function timelineHTML(plan, { customer = false } = {}) {
   const { open, close } = plan;
   const span = close - open;
   const pct = (m) => ((Math.min(Math.max(m, open), close) - open) / span) * 100;
-  const now = plan.cutoff > -1 && state.date === todayISO() ? nowMin() : -1;
+  const today = todayISO();
+  const now = state.date === today ? nowMin() : -1;
   const hasNow = now > open && now < close;
-  const pastEnd = showPast && now > open ? Math.min(now, close) : open;
+  const pastEnd = state.date < today ? close : now > open ? Math.min(now, close) : open;
 
   // بازه‌های رزرو، مرتب و ادغام‌شده
   const busy = [];
@@ -329,7 +332,10 @@ function timelineHTML(plan, showPast) {
     else segs.push({ kind, s, e });
   };
   const add = (kind, s, e) => {
-    if (s < pastEnd) { push('past', s, Math.min(e, pastEnd)); s = Math.max(s, pastEnd); }
+    if (s < pastEnd) {
+      push(kind === 'busy' && !customer ? 'was' : 'past', s, Math.min(e, pastEnd));
+      s = Math.max(s, pastEnd);
+    }
     push(kind, s, e);
   };
   let t = open;
@@ -340,10 +346,11 @@ function timelineHTML(plan, showPast) {
     const w = pct(e) - pct(s);
     let label = '';
     if (kind === 'free') label = w >= 24 ? `خالی <small>${fmtDur(e - s)}</small>` : w >= 9 ? 'خالی' : '';
-    else if (kind === 'busy') label = w >= 9 ? 'رزرو' : '';
+    else if (kind === 'busy' || kind === 'was') label = w >= 9 ? 'رزرو' : '';
     else if (w >= 16) label = 'گذشته';
-    const title = `${kind === 'free' ? 'خالی' : kind === 'busy' ? 'رزرو شده' : 'گذشته'}: ${faTime(s)} تا ${faTime(e)}`;
-    return `<div class="tl-seg tl-${kind}" style="right:${pct(s)}%;width:${w}%" title="${title}">${label}</div>`;
+    const name = { free: 'خالی', busy: 'رزرو شده', was: 'رزرو (گذشته)', past: 'گذشته' }[kind];
+    const cls = kind === 'was' ? 'tl-busy tl-was' : `tl-${kind}`;
+    return `<div class="tl-seg ${cls}" style="right:${pct(s)}%;width:${w}%" title="${name}: ${faTime(s)} تا ${faTime(e)}">${label}</div>`;
   }).join('');
 
   // خط‌کش ساعت: فقط ساعت‌های کامل، با فاصلهٔ مناسب برای طول روز
@@ -361,7 +368,7 @@ function timelineHTML(plan, showPast) {
     <span class="tl-now-line" style="right:${pct(now)}%"></span>` : '';
 
   return `
-    ${showPast ? statusHTML(plan) : ''}
+    ${customer ? statusHTML(plan) : ''}
     <div class="tl ${hasNow ? 'has-now' : ''}">
       ${nowHTML}
       <div class="tl-bar">${segHTML}</div>
@@ -669,7 +676,7 @@ function renderUser() {
           <span>${longDate(state.date)}</span>
           ${!plan.closed ? `<span class="muted">ساعت کاری ${faTime(plan.open)} تا ${faTime(plan.close)}</span>` : ''}
         </div>
-        ${!plan.closed ? timelineHTML(plan, true) + `
+        ${!plan.closed ? timelineHTML(plan, { customer: true }) + `
           <div class="legend">
             <span><i class="lg-free"></i>خالی</span>
             <span><i class="lg-busy"></i>رزرو شده</span>
@@ -833,7 +840,7 @@ function adminScheduleHTML() {
       <div class="card stat"><div class="k">زمان خالی</div><div class="v" style="font-size:15px;color:var(--free)">${plan.closed ? 'تعطیل' : free ? fmtDur(free) : '—'}</div></div>
     </div>
 
-    ${!plan.closed ? `<div class="card" style="margin-top:12px;padding:14px 16px">${timelineHTML({ ...plan, cutoff: isToday ? now : -1 }, false)}</div>` : ''}
+    ${!plan.closed ? `<div class="card" style="margin-top:12px;padding:14px 16px">${timelineHTML(plan)}</div>` : ''}
 
     <div class="section-title"><span>برنامهٔ روز</span><span class="muted">${plan.closed ? '' : `ساعت کاری ${faTime(plan.open)} تا ${faTime(plan.close)}`}</span></div>
     ${agenda}
