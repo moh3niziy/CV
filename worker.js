@@ -16,6 +16,13 @@ const USERNAME_RE = /^[a-z0-9_.-]{3,32}$/;
 const TIME_ZONE = 'Asia/Tehran'; // ساعت مرجع برای جلوگیری از رزرو در زمان گذشته
 const PAST_GRACE_MIN = 5;        // چند دقیقه تأخیر مجاز (مثلاً ثبت مشتری که همین الان نشسته)
 
+// اشتراک: هر آرایشگاه جدید ۳۰ روز رایگان دارد. ۷ روز آخر هشدار، بعد از پایان ۷ روز «فقط مشاهده»
+// و پس از آن دقیقاً مثل غیرفعال‌سازی دستی رفتار می‌شود.
+const FREE_DAYS = 30;
+const WARN_DAYS = 7;
+const GRACE_DAYS = 7;
+const SUPPORT = { phone: '09399515814', telegram: 'moh3nIziy' }; // راه تماس برای تمدید اشتراک
+
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
     status,
@@ -23,8 +30,9 @@ const json = (obj, status = 200) =>
   });
 
 class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, extra) { super(message); this.status = status; this.extra = extra; }
 }
+const expiredError = () => new HttpError(403, 'اشتراک این آرایشگاه به پایان رسیده است', { expired: true, support: SUPPORT });
 
 const toEn = (v) =>
   String(v ?? '')
@@ -78,7 +86,8 @@ async function migrate(db) {
   ]);
   secret = (await db.prepare("SELECT value FROM meta WHERE key = 'secret'").first()).value;
   // ستون‌هایی که بعداً اضافه شده‌اند
-  for (const col of ['active INTEGER NOT NULL DEFAULT 1', "telegram TEXT NOT NULL DEFAULT ''", "instagram TEXT NOT NULL DEFAULT ''"]) {
+  for (const col of ['active INTEGER NOT NULL DEFAULT 1', "telegram TEXT NOT NULL DEFAULT ''", "instagram TEXT NOT NULL DEFAULT ''",
+    "expires_at TEXT NOT NULL DEFAULT ''"]) {
     try {
       await db.prepare(`ALTER TABLE shops ADD COLUMN ${col}`).run();
     } catch (err) {
@@ -96,6 +105,9 @@ async function migrate(db) {
       db.prepare('DROP TABLE store'),
     ]);
   }
+
+  // آرایشگاه‌هایی که از قبل بوده‌اند هم از امروز ۳۰ روز اشتراک رایگان می‌گیرند
+  await db.prepare("UPDATE shops SET expires_at = ? WHERE expires_at = ''").bind(addDaysISO(localNow().date, FREE_DAYS)).run();
 }
 
 /* ---------------------------------------------------------------- auth */
@@ -128,10 +140,14 @@ async function readAuth(request, env, db) {
   try { p = JSON.parse(unb64url(body)); } catch { return null; }
   if (!p || p.e < Date.now()) return null;
   if (p.r === 'super') { const m = await superMark(env); return m && p.h === m ? p : null; }
-  const acc = await db.prepare(`SELECT a.pass, a.role, a.barber_id, s.active FROM accounts a
+  const acc = await db.prepare(`SELECT a.pass, a.role, a.barber_id, s.active, s.expires_at FROM accounts a
     JOIN shops s ON s.id = a.shop_id WHERE a.shop_id = ? AND a.username = ?`).bind(p.s, p.u).first();
   if (!acc || acc.role !== p.r || passMark(acc.pass) !== p.h) return null;
-  return { ...p, b: acc.barber_id, disabled: !acc.active };
+  const sub = subStatus(acc.expires_at);
+  return {
+    ...p, b: acc.barber_id,
+    disabled: !acc.active || sub.state === 'expired', expired: sub.state === 'expired', readonly: sub.state === 'grace',
+  };
 }
 
 function requireAuth(auth) {
@@ -140,8 +156,16 @@ function requireAuth(auth) {
 function requireShop(auth, shopId, roles) {
   requireAuth(auth);
   if (auth.r === 'super') return;
+  if (auth.expired) throw expiredError();
   if (auth.disabled) throw new HttpError(403, 'این آرایشگاه غیرفعال شده است');
   if (auth.s !== shopId || !roles.includes(auth.r)) throw new HttpError(403, 'به این بخش دسترسی ندارید');
+}
+
+// در مهلت ۷ روزهٔ بعد از پایان اشتراک، مالک و آرایشگرها فقط می‌توانند ببینند
+function requireWritable(auth) {
+  if (auth.r !== 'super' && auth.readonly) {
+    throw new HttpError(403, 'اشتراک این آرایشگاه تمام شده و پنل فقط قابل مشاهده است', { readonly: true, support: SUPPORT });
+  }
 }
 
 /* ---------------------------------------------------------------- helpers */
@@ -150,6 +174,18 @@ function localNow() {
     timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
   }).formatToParts(new Date()).map((x) => [x.type, x.value]));
   return { date: `${p.year}-${p.month}-${p.day}`, min: Number(p.hour) * 60 + Number(p.minute) };
+}
+
+const addDaysISO = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+const diffDays = (from, to) => Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 864e5);
+
+// وضعیت اشتراک بر اساس تاریخ ایران. expiresAt آخرین روز اشتراک است (همان روز هنوز فعال است).
+function subStatus(expiresAt) {
+  if (!expiresAt) return { state: 'active', expiresAt: null, daysLeft: null };
+  const left = diffDays(localNow().date, expiresAt);
+  if (left >= 0) return { state: left < WARN_DAYS ? 'warning' : 'active', expiresAt, daysLeft: left };
+  if (left >= -GRACE_DAYS) return { state: 'grace', expiresAt, daysLeft: left, graceLeft: GRACE_DAYS + left };
+  return { state: 'expired', expiresAt, daysLeft: left };
 }
 
 // نوبت جدید یا جابه‌جا شده نباید در روز یا ساعت گذشته باشد
@@ -208,11 +244,11 @@ function cleanSocial(value, urlRe, idRe, label) {
 }
 
 async function getShop(db, id) {
-  const row = await db.prepare('SELECT id, name, location, telegram, instagram, data, version, active FROM shops WHERE id = ?').bind(id).first();
+  const row = await db.prepare('SELECT id, name, location, telegram, instagram, data, version, active, expires_at FROM shops WHERE id = ?').bind(id).first();
   if (!row) throw new HttpError(404, 'آرایشگاه پیدا نشد');
   return {
     shop: {
-      id: row.id, name: row.name, location: row.location, active: !!row.active,
+      id: row.id, name: row.name, location: row.location, active: !!row.active, sub: subStatus(row.expires_at),
       telegram: row.telegram || '', instagram: row.instagram || '',
     },
     data: JSON.parse(row.data), version: row.version,
@@ -257,8 +293,9 @@ async function readJson(request) {
 // نمای مشتری فقط بازه‌های پر را می‌گیرد، نه نام و شمارهٔ مشتری‌ها
 function publicView({ shop, data }) {
   const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  const { sub, ...publicShop } = shop; // وضعیت اشتراک برای مشتری‌ها لازم نیست
   return {
-    shop,
+    shop: publicShop,
     barbers: data.barbers || [],
     busy: (data.appointments || [])
       .filter((a) => a.date >= yesterday)
@@ -293,14 +330,20 @@ async function handleApi(request, env, path) {
     if (method === 'GET' && parts.length === 1) {
       // آرایشگاه‌های غیرفعال فقط برای مدیر سایت نمایش داده می‌شوند
       const all = auth?.r === 'super';
-      const { results } = await db.prepare(`SELECT id, name, location, active,
+      const { results } = await db.prepare(`SELECT id, name, location, active, expires_at,
         COALESCE(json_array_length(data, '$.barbers'), 0) AS barbers
-        FROM shops ${all ? '' : 'WHERE active = 1'} ORDER BY created_at`).all();
-      return json({ shops: results.map((r) => ({ ...r, active: !!r.active })) });
+        FROM shops ORDER BY created_at`).all();
+      const shops = results
+        .map(({ expires_at: e, ...r }) => ({ ...r, active: !!r.active, sub: subStatus(e) }))
+        .filter((r) => all || (r.active && r.sub.state !== 'expired'));
+      return json({ shops: all ? shops : shops.map(({ sub, ...r }) => r) });
     }
     if (method === 'GET' && parts.length === 2) {
       const shop = await getShop(db, id);
-      if (!shop.shop.active && auth?.r !== 'super') throw new HttpError(403, 'این آرایشگاه در حال حاضر غیرفعال است');
+      if (auth?.r !== 'super') {
+        if (shop.shop.sub.state === 'expired') throw expiredError();
+        if (!shop.shop.active) throw new HttpError(403, 'این آرایشگاه در حال حاضر غیرفعال است');
+      }
       return json(publicView(shop));
     }
 
@@ -310,6 +353,7 @@ async function handleApi(request, env, path) {
       const u = toEn(username).toLowerCase();
       const { shop, data } = await getShop(db, id);
       if (isSuperLogin(env, username, password)) return json(await superToken());
+      if (shop.sub.state === 'expired') throw expiredError();
       if (!shop.active) throw new HttpError(403, 'این آرایشگاه غیرفعال شده است');
       const acc = await db.prepare('SELECT username, pass, role, barber_id FROM accounts WHERE shop_id = ? AND username = ?').bind(id, u).first();
       if (!acc || !(await checkPassword(toEn(password), acc.pass))) throw new HttpError(401, 'نام کاربری یا رمز عبور اشتباه است');
@@ -331,11 +375,11 @@ async function handleApi(request, env, path) {
     requireAuth(auth);
     if (auth.r !== 'super') throw new HttpError(403, 'فقط مدیر سایت می‌تواند آرایشگاه اضافه کند');
     const body = await readJson(request);
-    const shop = { id: newId(), ...cleanShop(body) };
+    const shop = { id: newId(), ...cleanShop(body), expiresAt: addDaysISO(localNow().date, FREE_DAYS) };
     const ownerOps = await setOwner(db, shop.id, body.ownerUsername, body.ownerPassword, true);
     await db.batch([
-      db.prepare('INSERT INTO shops (id, name, location, telegram, instagram, data, version, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)')
-        .bind(shop.id, shop.name, shop.location, shop.telegram, shop.instagram, JSON.stringify(EMPTY), Date.now()),
+      db.prepare('INSERT INTO shops (id, name, location, telegram, instagram, expires_at, data, version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)')
+        .bind(shop.id, shop.name, shop.location, shop.telegram, shop.instagram, shop.expiresAt, JSON.stringify(EMPTY), Date.now()),
       ...ownerOps,
     ]);
     return json(shop);
@@ -345,6 +389,7 @@ async function handleApi(request, env, path) {
     // ویرایش نام، لوکیشن، صفحات مجازی و اطلاعات ورود مالک (مدیر سایت یا خود مالک)
     if (method === 'PUT') {
       requireShop(auth, id, ['owner']);
+      requireWritable(auth);
       const body = await readJson(request);
       const info = cleanShop(body);
       await getShop(db, id);
@@ -378,19 +423,20 @@ async function handleApi(request, env, path) {
           barbers: cur.data.barbers.filter((b) => b.id === auth.b),
           appointments: cur.data.appointments.filter((a) => a.barberId === auth.b),
         };
-        return json({ ...cur, role: 'barber', barberId: auth.b });
+        return json({ ...cur, role: 'barber', barberId: auth.b, support: SUPPORT });
       }
-      return json({ ...cur, role: auth.r, accounts: await shopAccounts(db, id) });
+      return json({ ...cur, role: auth.r, accounts: await shopAccounts(db, id), support: SUPPORT });
     }
 
     if (method === 'PUT') {
+      requireWritable(auth);
       const { data, version } = await readJson(request);
       if (!data || !Array.isArray(data.barbers) || !Array.isArray(data.appointments) || !Number.isInteger(version)) {
         throw new HttpError(400, 'درخواست نامعتبر است');
       }
       if (version !== cur.version) throw new HttpError(409, 'داده‌ها هم‌زمان از دستگاه دیگری تغییر کرده است');
-      // آرایشگاه غیرفعال نوبت جدید نمی‌پذیرد (حتی از مدیر سایت)؛ ویرایش و حذف نوبت‌های قبلی آزاد است
-      if (!cur.shop.active) {
+      // آرایشگاه غیرفعال یا منقضی نوبت جدید نمی‌پذیرد (حتی از مدیر سایت)؛ ویرایش و حذف نوبت‌های قبلی آزاد است
+      if (!cur.shop.active || cur.shop.sub.state === 'expired') {
         const known = new Set(cur.data.appointments.map((a) => a.id));
         if (data.appointments.some((a) => !known.has(a.id))) {
           throw new HttpError(403, 'این آرایشگاه غیرفعال است و نوبت جدید ثبت نمی‌شود');
@@ -434,9 +480,23 @@ async function handleApi(request, env, path) {
     return json({ id, active: !!active });
   }
 
+  // تعیین تاریخ پایان اشتراک (فقط مدیر سایت)
+  if (id && parts[3] === 'subscription' && parts.length === 4 && method === 'PUT') {
+    requireAuth(auth);
+    if (auth.r !== 'super') throw new HttpError(403, 'فقط مدیر سایت می‌تواند اشتراک را تغییر دهد');
+    const { expiresAt } = await readJson(request);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(expiresAt)) || Number.isNaN(Date.parse(expiresAt))) {
+      throw new HttpError(400, 'تاریخ پایان اشتراک نامعتبر است');
+    }
+    const res = await db.prepare('UPDATE shops SET expires_at = ? WHERE id = ?').bind(expiresAt, id).run();
+    if (!res.meta.changes) throw new HttpError(404, 'آرایشگاه پیدا نشد');
+    return json({ id, sub: subStatus(expiresAt) });
+  }
+
   // نام کاربری و رمز آرایشگر (مالک یا مدیر سایت)
   if (id && parts[3] === 'accounts' && parts[4] && parts.length === 5) {
     requireShop(auth, id, ['owner']);
+    requireWritable(auth);
     const barberId = parts[4];
     await getShop(db, id);
     if (method === 'DELETE') {
@@ -471,7 +531,7 @@ export default {
       try {
         return await handleApi(request, env, path);
       } catch (err) {
-        if (err instanceof HttpError) return json({ error: err.message }, err.status);
+        if (err instanceof HttpError) return json({ error: err.message, ...(err.extra || {}) }, err.status);
         return json({ error: 'خطای سرور: ' + (err && err.message) }, 500);
       }
     }

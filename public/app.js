@@ -24,6 +24,7 @@ const ICONS = {
   coffee: '<path d="M17 8h1a4 4 0 1 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4zM6 2v2M10 2v2M14 2v2"/>',
   store: '<path d="M3 9h18l-1.5-5h-15zM4 9v11h16V9M9 20v-6h6v6"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
@@ -138,7 +139,9 @@ async function api(method, path, body) {
       state.admin = null;
       if (state.shopId) location.hash = `#/s/${encodeURIComponent(state.shopId)}`;
     }
-    throw Object.assign(new AppError(json.error || 'خطایی رخ داد'), { status: res.status });
+    throw Object.assign(new AppError(json.error || 'خطایی رخ داد'), {
+      status: res.status, expired: !!json.expired, readonly: !!json.readonly, support: json.support,
+    });
   }
   return json;
 }
@@ -157,7 +160,8 @@ async function loadShops() {
 }
 
 async function loadAdmin() {
-  const { shop, data, version, role, barberId, accounts } = await api('GET', `${shopPath()}/data`);
+  const { shop, data, version, role, barberId, accounts, support } = await api('GET', `${shopPath()}/data`);
+  state.support = support || null;
   state.shop = shop;
   state.role = role;
   state.accounts = accounts || null;
@@ -752,6 +756,48 @@ function openLogin(next) {
   });
 }
 
+/* ================================================================ subscription */
+const isReadOnly = () => state.shop?.sub?.state === 'grace' && state.role !== 'super';
+const shortDate = (iso) => { const d = dateOf(iso); return `${F_DAY.format(d)} ${F_MON.format(d)} ${F_YEAR.format(d)}`; };
+
+// راه‌های تماس با پشتیبانی برای تمدید اشتراک (تلگرام، تماس، پیامک)
+function supportHTML(support) {
+  if (!support) return '';
+  const tg = support.telegram, ph = support.phone;
+  return `<div class="support">
+    ${tg ? `<a class="btn support-tg" href="https://t.me/${encodeURIComponent(tg)}" target="_blank" rel="noopener">${icon('telegram')}<span class="ltr">@${esc(tg)}</span></a>` : ''}
+    ${ph ? `<a class="btn" href="tel:${esc(ph)}">${icon('phone')}<span class="ltr">${fa(esc(ph))}</span></a>
+    <a class="btn" href="sms:${esc(ph)}">${icon('chat')}پیامک</a>` : ''}
+  </div>`;
+}
+
+function subBannerHTML() {
+  const sub = state.shop?.sub;
+  if (!sub) return '';
+  if (sub.state === 'warning') {
+    const when = sub.daysLeft === 0 ? 'امروز آخرین روز اشتراک این آرایشگاه است' : `اشتراک این آرایشگاه ${fa(sub.daysLeft)} روز دیگر (${shortDate(sub.expiresAt)}) تمام می‌شود`;
+    return `<div class="sub-banner warn">${icon('alert')}<div><b>${when}.</b>
+      <p>برای تمدید اشتراک با پشتیبانی تماس بگیرید:</p>${supportHTML(state.support)}</div></div>`;
+  }
+  if (sub.state === 'grace') {
+    return `<div class="sub-banner busy">${icon('lock')}<div><b>اشتراک این آرایشگاه تمام شده است.</b>
+      <p>پنل ${sub.graceLeft ? `تا ${fa(sub.graceLeft)} روز دیگر` : 'تا پایان امروز'} فقط قابل مشاهده است و پس از آن آرایشگاه غیرفعال می‌شود و برای مشتری‌ها هم نمایش داده نمی‌شود. برای تمدید تماس بگیرید:</p>
+      ${supportHTML(state.support)}</div></div>`;
+  }
+  return '';
+}
+
+function expiredHTML(support) {
+  return `<div class="page"><div class="card expired-card">
+    <div class="empty" style="padding-bottom:8px">
+      <div class="big-icon">${icon('lock')}</div>
+      <h3>اشتراک این آرایشگاه به پایان رسیده است</h3>
+      <p>برای تهیه یا تمدید اشتراک با پشتیبانی تماس بگیرید:</p>
+    </div>
+    ${supportHTML(support)}
+  </div></div>`;
+}
+
 /* ================================================================ admin view */
 function renderAdmin() {
   renderTopbar('admin');
@@ -769,7 +815,7 @@ function renderAdmin() {
   }
   const body = canManage() && (state.tab === 'barbers' || !barbers.length) ? adminBarbersHTML() : adminScheduleHTML();
   $('#app').innerHTML = `
-    <div class="page">
+    <div class="page ${isReadOnly() ? 'readonly' : ''}">
       <div class="admin-head">
         <div class="hero" style="padding:0">
           <h1>${state.role === 'barber' ? 'نوبت‌های من' : 'پنل مدیریت'}</h1>
@@ -777,6 +823,7 @@ function renderAdmin() {
         </div>
         ${barbers.length && canManage() ? tabs : ''}
       </div>
+      ${subBannerHTML()}
       ${state.shop?.active === false ? `<div class="alert alert-warn" style="margin-top:16px">${icon('alert')}<span>این آرایشگاه غیرفعال است؛ ثبت نوبت جدید ممکن نیست. نوبت‌های قبلی را می‌توانید ویرایش یا حذف کنید.</span></div>` : ''}
       ${body}
     </div>`;
@@ -794,7 +841,8 @@ function adminScheduleHTML() {
   const isToday = state.date === todayISO();
   const now = nowMin();
 
-  const locked = state.shop?.active === false || pastDay; // غیرفعال یا روز گذشته: ثبت نوبت جدید ممکن نیست
+  // غیرفعال، روز گذشته یا مهلت پایان اشتراک (فقط مشاهده): ثبت نوبت جدید ممکن نیست
+  const locked = state.shop?.active === false || pastDay || isReadOnly();
 
   // ترکیب نوبت‌ها و بازه‌های خالی به ترتیب زمان
   const items = [
@@ -998,6 +1046,7 @@ function setTime(root, name, value) {
 /* ================================================================ appointment modal */
 function openApptModal(appt, presetStart) {
   if (!appt && state.shop?.active === false) { toast('این آرایشگاه غیرفعال است و نوبت جدید ثبت نمی‌شود', true); return; }
+  if (isReadOnly()) { toast('اشتراک تمام شده و پنل فقط قابل مشاهده است', true); return; }
   if (!appt && state.date < todayISO()) { toast('ثبت نوبت برای روزهای گذشته ممکن نیست', true); return; }
   const { barbers, appointments } = state.admin;
   const b = barbers.find((x) => x.id === (appt?.barberId || state.barberId));
@@ -1538,6 +1587,7 @@ async function render(reload = true) {
     }
   } catch (err) {
     renderTopbar(r.view);
+    if (err.expired) { $('#app').innerHTML = expiredHTML(err.support); return; }
     const back = err.status === 404 || err.status === 403 ? '' : '<button class="btn btn-primary" onclick="render()">تلاش دوباره</button>';
     $('#app').innerHTML = `<div class="page"><div class="card">${emptyHTML(err.status === 403 ? 'lock' : 'alert', err.status === 404 ? 'آرایشگاه پیدا نشد' : err.status === 403 ? 'دسترسی ممکن نیست' : 'خطا در بارگذاری', esc(err.message), back)}</div></div>`;
   }

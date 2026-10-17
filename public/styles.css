@@ -389,6 +389,25 @@ textarea.input { resize: vertical; line-height: 1.8; }
 .top-link.ig:hover { border-color: #d62976; }
 .field label svg { width: 15px; height: 15px; vertical-align: -2px; }
 
+/* ================================================================ subscription */
+.sub-banner {
+  display: flex; gap: 10px; align-items: flex-start; margin-top: 16px; padding: 14px 16px; border-radius: 16px; font-size: 14px;
+}
+.sub-banner > svg { margin-top: 3px; width: 20px; height: 20px; }
+.sub-banner p { margin: 4px 0 10px; font-size: 13.5px; }
+.sub-banner.warn { background: var(--warn-soft); color: var(--warn); }
+.sub-banner.busy { background: var(--busy-soft); color: var(--busy); }
+.support { display: flex; gap: 8px; flex-wrap: wrap; }
+.support .btn { padding: 7px 14px; font-size: 13.5px; color: var(--text); }
+.support .support-tg { color: #229ed9; }
+[data-theme="dark"] .support .support-tg { color: #5ec2f0; }
+.expired-card .support { justify-content: center; padding-bottom: 16px; }
+/* مهلت پایان اشتراک: پنل فقط قابل مشاهده است */
+.readonly [data-action="new-appt"], .readonly [data-action="edit-appt"], .readonly [data-action="del-appt"],
+.readonly [data-action="new-barber"], .readonly [data-action="edit-barber"], .readonly [data-action="del-barber"],
+.readonly label.btn, .readonly form button { display: none !important; }
+.readonly form input, .readonly form textarea { pointer-events: none; opacity: .7; }
+
 /* ================================================================ accounts */
 .cred-box { border: 1.5px dashed var(--border); border-radius: 14px; padding: 12px 14px 10px; margin-bottom: 16px; }
 .cred-box > .label { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
