@@ -171,18 +171,20 @@ async function readAuth(request, env, db) {
   const sub = subStatus(acc.expires_at);
   return {
     ...p, b: acc.barber_id,
-    disabled: !acc.active || sub.state === 'expired', expired: sub.state === 'expired', readonly: sub.state === 'grace',
+    // منقضی: مالک فقط برای دیدن پنل و ارسال رسید تمدید وارد می‌شود (فقط مشاهده)
+    inactive: !acc.active, expired: sub.state === 'expired', readonly: sub.state === 'grace' || sub.state === 'expired',
   };
 }
 
 function requireAuth(auth) {
   if (!auth) throw new HttpError(401, 'ابتدا وارد شوید');
 }
-function requireShop(auth, shopId, roles) {
+// allowExpired: مالک آرایشگاه منقضی (ولی نه غیرفعال‌شدهٔ دستی) به این بخش دسترسی دارد
+function requireShop(auth, shopId, roles, { allowExpired = false } = {}) {
   requireAuth(auth);
   if (auth.r === 'super') return;
-  if (auth.expired) throw expiredError();
-  if (auth.disabled) throw new HttpError(403, 'این آرایشگاه غیرفعال شده است');
+  if (auth.inactive) throw new HttpError(403, 'این آرایشگاه غیرفعال شده است');
+  if (auth.expired && !(allowExpired && auth.r === 'owner')) throw expiredError();
   if (auth.s !== shopId || !roles.includes(auth.r)) throw new HttpError(403, 'به این بخش دسترسی ندارید');
 }
 
@@ -418,10 +420,11 @@ async function handleApi(request, env, path) {
       const u = toEn(username).toLowerCase();
       const { shop, data } = await getShop(db, id);
       if (isSuperLogin(env, username, password)) return json(await superToken());
-      if (shop.sub.state === 'expired') throw expiredError(shop.name);
       if (!shop.active) throw new HttpError(403, 'این آرایشگاه غیرفعال شده است');
       const acc = await db.prepare('SELECT username, pass, role, barber_id FROM accounts WHERE shop_id = ? AND username = ?').bind(id, u).first();
       if (!acc || !(await checkPassword(toEn(password), acc.pass))) throw new HttpError(401, 'نام کاربری یا رمز عبور اشتباه است');
+      // آرایشگاه منقضی: فقط مالک (برای تمدید) وارد می‌شود
+      if (shop.sub.state === 'expired' && acc.role !== 'owner') throw expiredError(shop.name);
       const name = acc.role === 'owner' ? `مالک ${shop.name}` : (data.barbers.find((b) => b.id === acc.barber_id)?.name || acc.username);
       return json({
         token: await makeToken({ r: acc.role, s: id, u: acc.username, h: passMark(acc.pass) }),
@@ -639,7 +642,7 @@ async function handleApi(request, env, path) {
   }
 
   if (id && parts[3] === 'data' && parts.length === 4) {
-    requireShop(auth, id, ['owner', 'barber']);
+    requireShop(auth, id, ['owner', 'barber'], { allowExpired: method === 'GET' });
     const cur = await getShop(db, id);
 
     if (method === 'GET') {
@@ -724,7 +727,7 @@ async function handleApi(request, env, path) {
 
   // ارسال رسید تمدید اشتراک توسط مالک؛ در مهلت «فقط مشاهده» هم مجاز است
   if (id && parts[3] === 'renewal' && parts.length === 4 && method === 'POST') {
-    requireShop(auth, id, ['owner']);
+    requireShop(auth, id, ['owner'], { allowExpired: true });
     if (auth.r !== 'owner') throw new HttpError(403, 'فقط مالک آرایشگاه می‌تواند رسید تمدید بفرستد');
     const body = await readJson(request);
     const plan = Number(body.plan);

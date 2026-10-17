@@ -1208,7 +1208,7 @@ function openLogin(next) {
 }
 
 /* ================================================================ subscription */
-const isReadOnly = () => state.shop?.sub?.state === 'grace' && state.role !== 'super';
+const isReadOnly = () => ['grace', 'expired'].includes(state.shop?.sub?.state) && state.role !== 'super';
 const shortDate = (iso) => { const d = dateOf(iso); return `${F_DAY.format(d)} ${F_MON.format(d)} ${F_YEAR.format(d)}`; };
 
 // راه‌های تماس با پشتیبانی برای تمدید اشتراک (تلگرام، تماس، پیامک)
@@ -1224,18 +1224,23 @@ function supportHTML(support) {
 
 function subBannerHTML() {
   const sub = state.shop?.sub;
-  if (!sub || (sub.state !== 'warning' && sub.state !== 'grace')) return '';
+  if (!sub || !['warning', 'grace', 'expired'].includes(sub.state)) return '';
   const owner = state.role === 'owner';
   const pending = state.renewal && planOf(state.renewal.plan);
   // مالک: پیشنهاد تمدید با پرداخت کارت‌به‌کارت · آرایشگر: فقط اطلاع‌رسانی
   const action = !owner ? `<p>برای تمدید، مالک آرایشگاه از پنل خودش اقدام کند یا با پشتیبانی تماس بگیرید:</p>${supportHTML(state.support)}`
     : pending ? `<p>رسید تمدید شما (پلن ${pending.title}) ارسال شده و در انتظار تأیید است. پس از تأیید، اشتراک خودکار تمدید می‌شود.</p>
       <button class="btn" data-action="renew">${icon('plus')}ارسال رسید دیگر</button>`
-    : `<p>${sub.state === 'grace' ? 'برای فعال شدن دوباره' : 'برای اینکه نوبت‌دهی قطع نشود'}، همین حالا اشتراک را تمدید کنید.</p>
+    : `${sub.state === 'expired' ? '' : `<p>${sub.state === 'warning' ? 'برای اینکه نوبت‌دهی قطع نشود' : 'برای فعال شدن دوباره'}، همین حالا اشتراک را تمدید کنید.</p>`}
       <button class="btn btn-primary" data-action="renew">${icon('calendar')}تمدید اشتراک</button>`;
   if (sub.state === 'warning') {
     const when = sub.daysLeft === 0 ? 'امروز آخرین روز اشتراک این آرایشگاه است' : `اشتراک این آرایشگاه ${fa(sub.daysLeft)} روز دیگر (${shortDate(sub.expiresAt)}) تمام می‌شود`;
     return `<div class="sub-banner warn">${icon('alert')}<div><b>${when}.</b>${action}</div></div>`;
+  }
+  if (sub.state === 'expired') {
+    return `<div class="sub-banner busy">${icon('lock')}<div><b>اشتراک این آرایشگاه از ${shortDate(sub.expiresAt)} تمام شده و آرایشگاه غیرفعال است.</b>
+      <p>صفحهٔ آرایشگاه برای مشتری‌ها نمایش داده نمی‌شود و پنل فقط قابل مشاهده است. با تمدید اشتراک، همه‌چیز دوباره فعال می‌شود.</p>
+      ${action}</div></div>`;
   }
   return `<div class="sub-banner busy">${icon('lock')}<div><b>اشتراک این آرایشگاه تمام شده است.</b>
     <p>پنل ${sub.graceLeft ? `تا ${fa(sub.graceLeft)} روز دیگر` : 'تا پایان امروز'} فقط قابل مشاهده است و پس از آن آرایشگاه غیرفعال می‌شود و برای مشتری‌ها هم نمایش داده نمی‌شود.</p>
@@ -1311,7 +1316,13 @@ function expiredHTML(support, shopName) {
     <div class="big-icon">${icon('lock')}</div>
     ${shopName ? `<div class="expired-shop">${esc(shopName)}</div>` : ''}
     <h2>اشتراک این آرایشگاه به پایان رسیده است</h2>
-    <p>نوبت‌دهی آنلاین فعلاً در دسترس نیست. مدیریت آرایشگاه می‌تواند برای تمدید اشتراک و فعال‌سازی دوباره با پشتیبانی در ارتباط باشد:</p>
+    <p>نوبت‌دهی آنلاین این آرایشگاه فعلاً در دسترس نیست.</p>
+    <div class="expired-owner">
+      <b>مالک این آرایشگاه هستید؟</b>
+      <p>وارد پنل مدیریت شوید و اشتراک را با پرداخت کارت‌به‌کارت تمدید کنید؛ بعد از تأیید، صفحهٔ شما دوباره فعال می‌شود.</p>
+      <button class="btn btn-primary btn-lg btn-block" data-action="owner-renew">${icon('calendar')}ورود و تمدید اشتراک</button>
+    </div>
+    <p class="expired-help">سؤالی دارید؟ با پشتیبانی تماس بگیرید:</p>
     ${supportHTML(support)}
   </div></div>`;
 }
@@ -2084,6 +2095,13 @@ document.addEventListener('click', async (ev) => {
     }
     case 'renew':
       return openRenewModal();
+    case 'owner-renew': {
+      // از صفحهٔ آرایشگاه منقضی: ورود مالک و رفتن به پنل (بنر تمدید آنجاست)
+      const next = `#/s/${encodeURIComponent(state.shopId)}/admin`;
+      if (canEnterShop(state.shopId)) location.hash = next;
+      else openLogin(next);
+      return;
+    }
     case 'renew-approve':
     case 'renew-reject': {
       const r = (state.renewals || []).find((x) => x.id === el.dataset.id);
