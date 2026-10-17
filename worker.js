@@ -47,6 +47,13 @@ const b64url = (str) => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '
 const unb64url = (str) => decodeURIComponent(escape(atob(str.replace(/-/g, '+').replace(/_/g, '/'))));
 const sha256 = async (text) => hex(await crypto.subtle.digest('SHA-256', enc.encode(text)));
 const randomHex = (n) => hex(crypto.getRandomValues(new Uint8Array(n)));
+// مقایسه در زمان ثابت تا از مدت پاسخ نشود فهمید چند کاراکتر اول درست بوده است
+function safeEqual(a, b) {
+  a = String(a ?? ''); b = String(b ?? '');
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a.charCodeAt(i) | 0) ^ (b.charCodeAt(i) | 0);
+  return diff === 0;
+}
 
 async function hashPassword(password) {
   const salt = randomHex(16);
@@ -55,7 +62,7 @@ async function hashPassword(password) {
 async function checkPassword(password, stored) {
   if (!stored) return false;
   const [salt, hash] = stored.split('$');
-  return (await sha256(`${salt}:${password}`)) === hash;
+  return safeEqual(await sha256(`${salt}:${password}`), hash);
 }
 // بخشی از هش رمز در توکن قرار می‌گیرد تا با تغییر رمز، توکن‌های قبلی باطل شوند
 const passMark = (stored) => (stored || '').slice(-12);
@@ -126,7 +133,10 @@ async function superMark(env) {
 }
 function isSuperLogin(env, username, password) {
   const c = adminCreds(env);
-  return !!c && toEn(username).toLowerCase() === c.username && String(password ?? '') === c.password;
+  if (!c) return false;
+  const userOk = safeEqual(toEn(username).toLowerCase(), c.username);
+  const passOk = safeEqual(String(password ?? ''), c.password);
+  return userOk && passOk;
 }
 
 async function makeToken(payload) {
@@ -138,14 +148,14 @@ async function readAuth(request, env, db) {
   const header = request.headers.get('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   const [body, sig] = token.split('.');
-  if (!body || !sig || sig !== await hmac(secret, body)) return null;
+  if (!body || !sig || !safeEqual(sig, await hmac(secret, body))) return null;
   let p;
   try { p = JSON.parse(unb64url(body)); } catch { return null; }
   if (!p || p.e < Date.now()) return null;
-  if (p.r === 'super') { const m = await superMark(env); return m && p.h === m ? p : null; }
+  if (p.r === 'super') { const m = await superMark(env); return m && safeEqual(p.h, m) ? p : null; }
   const acc = await db.prepare(`SELECT a.pass, a.role, a.barber_id, s.active, s.expires_at FROM accounts a
     JOIN shops s ON s.id = a.shop_id WHERE a.shop_id = ? AND a.username = ?`).bind(p.s, p.u).first();
-  if (!acc || acc.role !== p.r || passMark(acc.pass) !== p.h) return null;
+  if (!acc || acc.role !== p.r || !safeEqual(passMark(acc.pass), p.h)) return null;
   const sub = subStatus(acc.expires_at);
   return {
     ...p, b: acc.barber_id,

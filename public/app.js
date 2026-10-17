@@ -206,14 +206,6 @@ function exportData() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-async function importData(file) {
-  let parsed;
-  try { parsed = JSON.parse(await file.text()); } catch { throw new AppError('فایل انتخاب‌شده معتبر نیست'); }
-  if (!parsed || !Array.isArray(parsed.barbers)) throw new AppError('فایل انتخاب‌شده معتبر نیست');
-  await loadAdmin();
-  await saveAdmin(normalizeData(parsed));
-}
-
 async function loadPublic() {
   state.pub = await api('GET', `/shops/${encodeURIComponent(state.shopId)}`);
   state.shop = state.pub.shop;
@@ -1304,10 +1296,7 @@ function adminBarbersHTML() {
         <div class="name" style="font-size:15px">اطلاعات آنلاین ذخیره می‌شود</div>
         <div class="hint muted" style="font-size:13px">همهٔ دستگاه‌ها اطلاعات یکسان می‌بینند. هر از گاهی یک نسخهٔ پشتیبان دانلود کنید.</div>
       </div>
-      <div class="row" style="flex-wrap:wrap">
-        <button class="btn btn-primary" data-action="export">${icon('check')}دانلود پشتیبان</button>
-        <label class="btn">${icon('plus')}بازیابی از فایل<input type="file" accept=".json,application/json" id="importFile" hidden></label>
-      </div>
+      <button class="btn btn-primary" data-action="export">${icon('check')}دانلود پشتیبان</button>
     </div>`;
 }
 
@@ -1808,18 +1797,6 @@ document.addEventListener('submit', async (ev) => {
     state.shop = { ...state.shop, ...res };
     await loadAdmin();
     toast('اطلاعات آرایشگاه ذخیره شد');
-    renderAdmin();
-  } catch (err) { toast(err.message, true); }
-});
-
-document.addEventListener('change', async (ev) => {
-  if (ev.target.id !== 'importFile' || !ev.target.files[0]) return;
-  const file = ev.target.files[0];
-  ev.target.value = '';
-  if (!(await confirmDialog('بازیابی از فایل', 'همهٔ اطلاعات فعلی با محتوای این فایل جایگزین می‌شود. ادامه می‌دهید؟', 'جایگزینی'))) return;
-  try {
-    await importData(file);
-    toast('داده‌ها بارگذاری شد');
     renderAdmin();
   } catch (err) { toast(err.message, true); }
 });
