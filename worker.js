@@ -578,14 +578,16 @@ async function handleApi(request, env, path) {
         throw new HttpError(409, 'برای این درخواست قبلاً آرایشگاه ساخته شده است');
       }
     }
-    const days = lead && PLAN_MONTHS.includes(lead.plan) ? lead.plan * 30 : FREE_DAYS;
+    // پلن انتخابی مدیر سایت در فرم بر پلن سفارش مقدم است
+    const plan = PLAN_MONTHS.includes(Number(body.plan)) ? Number(body.plan) : lead && PLAN_MONTHS.includes(lead.plan) ? lead.plan : 0;
+    const days = plan ? plan * 30 : FREE_DAYS;
     const shop = { id: newId(), ...cleanShop(body), expiresAt: addDaysISO(localNow().date, days) };
     const ownerOps = await setOwner(db, shop.id, body.ownerUsername, body.ownerPassword, true);
     await db.batch([
       db.prepare('INSERT INTO shops (id, name, location, telegram, instagram, expires_at, data, version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)')
         .bind(shop.id, shop.name, shop.location, shop.telegram, shop.instagram, shop.expiresAt, JSON.stringify(EMPTY), Date.now()),
       ...ownerOps,
-      ...(lead ? [db.prepare("UPDATE leads SET status = 'done', shop_id = ? WHERE id = ?").bind(shop.id, lead.id)] : []),
+      ...(lead ? [db.prepare("UPDATE leads SET status = 'done', shop_id = ?, plan = ? WHERE id = ?").bind(shop.id, plan || lead.plan, lead.id)] : []),
     ]);
     return json(shop);
   }

@@ -588,8 +588,12 @@ async function openShopModal(shop, prefill) {
         <button class="btn btn-ghost icon-btn sm" data-action="close" aria-label="بستن">${icon('x')}</button>
       </div>
       <form class="modal-body" id="shopForm" autocomplete="off">
-        ${prefill ? `<div class="alert alert-warn prefill-note">${icon('check')}<span>اطلاعات از درخواست «${esc(prefill.person)}» پر شده؛ قبل از ثبت بررسی کنید.
-          ${planOf(prefill.plan) ? `اشتراک پلن ${planOf(prefill.plan).title} (تا ${shortDate(addDays(todayISO(), prefill.plan * 30))}) ثبت می‌شود.` : ''}</span></div>` : ''}
+        ${prefill ? `<div class="alert alert-warn prefill-note">${icon('check')}<span>اطلاعات از درخواست «${esc(prefill.person)}» پر شده؛ قبل از ثبت بررسی کنید.</span></div>
+        <div class="field">
+          <span class="label">پلن اشتراک <span class="muted" style="font-weight:400">— انتخاب مشتری: ${planOf(prefill.plan)?.title || 'نامشخص'}</span></span>
+          <div class="plan-chips" id="shopPlans">${PLANS.map((p) => `<button type="button" class="pick" data-shop-plan="${p.months}">${p.title} <small>${toman(p.price)}</small></button>`).join('')}</div>
+          <span class="hint" id="shopPlanHint"></span>
+        </div>` : ''}
         <div class="field">
           <label for="sName">نام آرایشگاه</label>
           <input class="input" id="sName" required maxlength="60" value="${esc(shop?.name || prefill?.name || '')}" placeholder="مثلاً آرایشگاه رضا">
@@ -609,12 +613,26 @@ async function openShopModal(shop, prefill) {
     </div>`);
   const save = $('#shopSave');
   $('#shopForm').addEventListener('submit', (ev) => { ev.preventDefault(); save.click(); });
+  // پلن اشتراک (فقط هنگام ساخت از درخواست): پیش‌فرض همان پلن مشتری، قابل تغییر
+  let shopPlan = planOf(prefill?.plan)?.months || 6;
+  const drawPlan = () => {
+    $$('[data-shop-plan]').forEach((b) => b.classList.toggle('active', Number(b.dataset.shopPlan) === shopPlan));
+    $('#shopPlanHint').textContent = `اشتراک از امروز تا ${shortDate(addDays(todayISO(), shopPlan * 30))} (${fa(shopPlan * 30)} روز) ثبت می‌شود.`;
+  };
+  if (prefill) {
+    $('#shopPlans').addEventListener('click', (ev) => {
+      const b = ev.target.closest('[data-shop-plan]');
+      if (b) { shopPlan = Number(b.dataset.shopPlan); drawPlan(); }
+    });
+    drawPlan();
+  }
   save.addEventListener('click', async () => {
     const payload = {
       name: $('#sName').value.trim(), location: $('#sLoc').value.trim(),
       instagram: $('#sIg').value.trim(), telegram: $('#sTg').value.trim(),
       ownerUsername: toEn($('#oUser').value).toLowerCase(), ownerPassword: toEn($('#oPass').value),
       leadId: prefill?.leadId || undefined,
+      plan: prefill ? shopPlan : undefined,
     };
     if (!payload.name) { $('#sName').focus(); toast('نام آرایشگاه را وارد کنید', true); return; }
     if (!payload.location) { $('#sLoc').focus(); toast('لوکیشن آرایشگاه را وارد کنید', true); return; }
@@ -1119,7 +1137,7 @@ function leadsHTML() {
         <a class="btn" href="tel:${esc(l.phone)}">${icon('phone')}<span class="ltr">${fa(esc(l.phone))}</span></a>
         <a class="btn" href="sms:${esc(l.phone)}">${icon('chat')}پیامک</a>
       </div>
-      ${planOf(l.plan) ? `<div class="lead-plan">${icon('calendar')}<span>پلن ${planOf(l.plan).title}، ${toman(planOf(l.plan).price)} تومان</span></div>` : ''}
+      ${planOf(l.plan) ? `<div class="lead-plan lead-plan-main">${icon('calendar')}<span>پلن انتخابی: <b>${planOf(l.plan).title}</b>، ${toman(planOf(l.plan).price)} تومان</span></div>` : ''}
       ${l.receiptId ? `<button class="btn lead-receipt" data-action="view-receipt" data-id="${esc(l.receiptId)}">${icon('eye')}مشاهدهٔ رسید پرداخت${l.receipts > 1 ? ` <small>(${fa(l.receipts)} رسید، آخرین)</small>` : ''}</button>` : ''}
       ${l.note ? `<p class="lead-note">${esc(l.note)}</p>` : ''}
       ${l.shopId ? `<a class="btn lead-receipt" href="#/s/${encodeURIComponent(l.shopId)}/admin">${icon('store')}باز کردن آرایشگاه ساخته‌شده</a>`
