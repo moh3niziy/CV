@@ -746,6 +746,72 @@ function promoHTML() {
   </a>`;
 }
 
+// پیش‌نمایش ساختگی صفحهٔ مشتری داخل قاب گوشی (داده‌های ثابت، با همان اجزای واقعی سایت)
+function demoPhoneHTML() {
+  const open = 600, close = 1200, now = 820;                      // ۱۰:۰۰ تا ۲۰:۰۰، الان ۱۳:۴۰
+  const busy = [[600, 690], [720, 780], [870, 915], [1020, 1080]];
+  const pct = (m) => ((m - open) / (close - open)) * 100;
+  // بخش‌های نوار: قبل از «الان» گذشته، بعد از آن خالی یا رزرو
+  const segs = [['past', open, now]];
+  let t = now;
+  for (const [s, e] of busy) {
+    if (e <= now) continue;
+    if (s > t) segs.push(['free', t, s]);
+    segs.push(['busy', Math.max(s, t), e]);
+    t = e;
+  }
+  if (t < close) segs.push(['free', t, close]);
+  const free = segs.filter(([k]) => k === 'free');
+  const segHTML = segs.map(([k, s, e]) => {
+    const w = pct(e) - pct(s);
+    const label = k === 'free' ? (w >= 15 ? 'خالی' : '') : k === 'busy' ? (w >= 9 ? 'رزرو' : '') : (w >= 16 ? 'گذشته' : '');
+    return `<div class="tl-seg tl-${k}" style="right:${pct(s)}%;width:${w}%">${label}</div>`;
+  }).join('');
+  let ticks = '';
+  for (let m = 720; m < close; m += 120) ticks += `<span class="tl-tick" style="right:${pct(m)}%">${faTime(m)}</span>`;
+  const days = [0, 1, 2, 3].map((i) => {
+    const iso = addDays(todayISO(), i), d = dateOf(iso);
+    return `<span class="day ${i === 0 ? 'today active' : ''}"><div class="wd">${F_WD.format(d)}</div><div class="dn">${F_DAY.format(d)}</div><div class="mn">${F_MON.format(d)}</div></span>`;
+  }).join('');
+  return `
+    <div class="demo">
+      <div class="demo-phone" aria-hidden="true">
+        <div class="demo-notch"></div>
+        <div class="demo-screen"><div class="demo-inner">
+          <div class="demo-top">
+            <span class="brand-icon">${icon('scissors')}</span><b>پیرایش نمونه</b>
+            <span class="demo-top-icons">${icon('pin')}${icon('instagram')}</span>
+          </div>
+          <div class="demo-body">
+            <section class="hero"><h1>پیرایش نمونه</h1></section>
+            <div class="section-title"><span>انتخاب روز</span></div>
+            <div class="date-strip">${days}</div>
+            <div class="card">
+              <div class="section-title" style="margin-top:0"><span>امروز</span><span class="muted">ساعت کاری ${faTime(open)} تا ${faTime(close)}</span></div>
+              <div class="tl-status free"><i></i><span>الان خالی است تا ساعت ${faTime(free[0][2])}</span></div>
+              <div class="tl has-now">
+                <span class="tl-now" style="right:${pct(now)}%">الان ${faTime(now)}</span>
+                <span class="tl-now-line" style="right:${pct(now)}%"></span>
+                <div class="tl-bar">${segHTML}</div>
+                <div class="tl-ticks">
+                  <span class="tl-end start">${faTime(open)}<small>شروع کار</small></span>${ticks}
+                  <span class="tl-end finish">${faTime(close)}<small>پایان کار</small></span>
+                </div>
+              </div>
+              <div class="section-title"><span>زمان‌های خالی</span></div>
+              <div class="slots">${free.map(([, s, e]) => `<div class="slot"><div class="range">${faTime(s)} <span class="muted">تا</span> ${faTime(e)}</div><div class="len">${fmtDur(e - s)} زمان آزاد</div></div>`).join('')}</div>
+            </div>
+            <div class="card call-card" style="margin-top:12px">
+              <div><h3>رزرو نوبت با استاد رضا</h3><p>برای رزرو یکی از زمان‌های خالی تماس بگیرید</p></div>
+              <span class="btn btn-lg">${icon('phone')}<span class="ltr">${fa('0912 000 0000')}</span></span>
+            </div>
+          </div>
+        </div></div>
+      </div>
+      <p class="demo-caption">${icon('eye')}نمونهٔ صفحه‌ای که مشتری‌های شما می‌بینند</p>
+    </div>`;
+}
+
 function renderJoin(from) {
   renderTopbar('join');
   const features = [
@@ -789,6 +855,8 @@ function renderJoin(from) {
         </div>
         <div class="join-count hidden" id="joinCount"></div>
       </section>
+
+      ${demoPhoneHTML()}
 
       <section class="join-features">
         ${features.map(([ic, t, d]) => `<div class="feature"><span class="feature-icon">${icon(ic)}</span><div><b>${t}</b><p>${d}</p></div></div>`).join('')}

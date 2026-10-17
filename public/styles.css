@@ -541,6 +541,31 @@ textarea.input { resize: vertical; line-height: 1.8; }
 .renew-done .lead-badge { background: var(--free-soft); color: var(--free); }
 .renew-rejected { opacity: .65; }
 .sub-banner .btn { margin-top: 2px; }
+/* پیش‌نمایش گوشی در صفحهٔ join: صفحهٔ واقعی ۳۶۰ پیکسلی که کوچک‌تر نمایش داده می‌شود */
+.demo { --demo-scale: .74; display: flex; flex-direction: column; align-items: center; margin: 4px auto 28px; }
+.demo-phone {
+  position: relative; width: calc(360px * var(--demo-scale) + 20px); padding: 10px; border-radius: 38px;
+  background: #15151c; box-shadow: 0 0 0 1px #2b2b38, 0 24px 60px rgba(20, 20, 40, .28);
+}
+.demo-notch { position: absolute; top: 16px; left: 50%; width: 70px; height: 18px; margin-left: -35px; border-radius: 10px; background: #15151c; z-index: 2; }
+[data-theme="dark"] .demo-phone { background: #2a2a36; box-shadow: 0 0 0 1px #3d3d4d, 0 24px 60px rgba(0, 0, 0, .5); }
+[data-theme="dark"] .demo-notch { background: #2a2a36; }
+.demo-screen {
+  position: relative; width: calc(360px * var(--demo-scale)); height: calc(700px * var(--demo-scale));
+  border-radius: 28px; overflow: hidden; background: var(--bg); pointer-events: none; user-select: none;
+}
+.demo-screen::after { content: ''; position: absolute; inset: auto 0 0 0; height: 70px; background: linear-gradient(transparent, var(--bg)); }
+.demo-inner { width: 360px; transform: scale(var(--demo-scale)); transform-origin: top right; }
+.demo-top {
+  display: flex; align-items: center; gap: 8px; height: 56px; padding: 18px 14px 0; font-size: 15px;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.demo-top .brand-icon { width: 30px; height: 30px; }
+.demo-top-icons { margin-inline-start: auto; display: flex; gap: 10px; color: var(--muted); }
+.demo-body { padding: 4px 14px 20px; }
+.demo-body .hero h1 { font-size: 22px; }
+.demo-body .slots { grid-template-columns: 1fr; gap: 8px; }
+.demo-caption { display: flex; gap: 6px; align-items: center; margin: 12px 0 0; font-size: 13px; color: var(--muted); }
 .hp { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); opacity: 0; pointer-events: none; }
 #joinForm { position: relative; }
 .seg .count { background: var(--busy); color: #fff; border-radius: 999px; padding: 0 7px; font-size: 11.5px; line-height: 1.6; }
