@@ -368,6 +368,9 @@ async function handleApi(request, env, path) {
     throw new HttpError(404, 'مسیر پیدا نشد');
   }
 
+  // ---- راه‌های تماس با پشتیبانی (برای صفحهٔ درخواست ساخت سایت)
+  if (method === 'GET' && path === '/api/support') return json({ support: SUPPORT });
+
   // ---- درخواست ساخت سایت از صفحهٔ «تو هم می‌خواهی؟» (عمومی)
   if (method === 'POST' && path === '/api/leads') {
     const body = await readJson(request);

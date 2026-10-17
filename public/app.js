@@ -24,6 +24,8 @@ const ICONS = {
   coffee: '<path d="M17 8h1a4 4 0 1 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4zM6 2v2M10 2v2M14 2v2"/>',
   store: '<path d="M3 9h18l-1.5-5h-15zM4 9v11h16V9M9 20v-6h6v6"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  gift: '<path d="M20 12v10H4V12M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/>',
+  star: '<path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8-6.2-3.2-6.2 3.2L7 14.2 2 9.3l6.9-1z"/>',
   chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
@@ -742,13 +744,43 @@ function renderJoin(from) {
     ['users', 'برای یک یا چند آرایشگر', 'هر آرایشگر حساب و برنامهٔ خودش را دارد و شما همه را مدیریت می‌کنید.'],
     ['store', 'صفحهٔ اختصاصی آرایشگاه', 'با لوکیشن، اینستاگرام، تلگرام و حتی دامنهٔ اختصاصی خودتان.'],
   ];
+  // تعرفه‌ها (تومان). صرفه‌جویی نسبت به پرداخت ماهانه حساب می‌شود
+  const MONTHLY = 1_000_000;
+  const plans = [
+    { months: 1, price: 1_000_000, title: 'ماهانه' },
+    { months: 3, price: 2_000_000, title: 'سه‌ماهه' },
+    { months: 6, price: 3_000_000, title: 'شش‌ماهه', best: true },
+  ];
+  const toman = (n) => n >= 1e6 && n % 1e6 === 0 ? `${fa(n / 1e6)} میلیون` : `${fa(Math.round(n / 1e3).toLocaleString('en'))} هزار`;
+  const planHTML = (p) => {
+    const save = MONTHLY * p.months - p.price;
+    return `<div class="plan ${p.best ? 'best' : ''}">
+      ${p.best ? `<span class="plan-flag">${icon('star')}به‌صرفه‌ترین</span>` : ''}
+      <div class="plan-title">${p.title}</div>
+      <div class="plan-price"><b>${toman(p.price)}</b> تومان</div>
+      <div class="plan-per">${p.months > 1 ? `ماهی ${toman(p.price / p.months)} تومان` : 'پرداخت ماه‌به‌ماه'}</div>
+      ${save > 0 ? `<div class="plan-save">${fa(Math.round(save / (MONTHLY * p.months) * 100))}٪ تخفیف · ${toman(save)} تومان صرفه‌جویی</div>` : '<div class="plan-save muted-save">بدون تعهد بلندمدت</div>'}
+    </div>`;
+  };
+
   $('#app').innerHTML = `
     <div class="page join">
       <section class="join-hero">
-        <span class="join-badge">${icon('check')}یک ماه اول رایگان</span>
         <h1>سایت نوبت‌دهی اختصاصی برای آرایشگاه شما</h1>
         <p>دفترچهٔ نوبت را کنار بگذارید. مشتری‌ها زمان‌های خالی را آنلاین می‌بینند و شما نوبت‌ها را از گوشی مدیریت می‌کنید.</p>
+        <div class="join-contact" id="joinContactTop"></div>
       </section>
+
+      <section class="pricing">
+        <h2>تعرفه‌ها</h2>
+        <div class="plans">${plans.map(planHTML).join('')}</div>
+        <div class="gift">
+          <span class="gift-icon">${icon('gift')}</span>
+          <div><b>یک ماه رایگان هدیه بگیرید!</b>
+            <p>با معرفی ما در پیج اینستاگرام آرایشگاهتان (پست مشترک)، یک ماه اشتراک رایگان به اشتراکتان اضافه می‌شود.</p></div>
+        </div>
+      </section>
+
       <div class="join-grid">
         <div class="join-features">
           ${features.map(([ic, t, d]) => `<div class="feature"><span class="feature-icon">${icon(ic)}</span><div><b>${t}</b><p>${d}</p></div></div>`).join('')}
@@ -774,7 +806,17 @@ function renderJoin(from) {
           </form>
         </div>
       </div>
+
+      <section class="join-bottom">
+        <b>سؤالی دارید؟ مستقیم با ما در تماس باشید</b>
+        <div class="join-contact" id="joinContactBottom"></div>
+      </section>
     </div>`;
+
+  // راه‌های تماس از سرور خوانده می‌شود تا فقط یک جا تعریف شوند
+  api('GET', '/support').then(({ support }) => {
+    ['#joinContactTop', '#joinContactBottom'].forEach((sel) => { const el = $(sel); if (el) el.innerHTML = supportHTML(support); });
+  }).catch(() => {});
 
   $('#joinForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
