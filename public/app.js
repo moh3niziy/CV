@@ -24,7 +24,6 @@ const ICONS = {
   coffee: '<path d="M17 8h1a4 4 0 1 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4zM6 2v2M10 2v2M14 2v2"/>',
   store: '<path d="M3 9h18l-1.5-5h-15zM4 9v11h16V9M9 20v-6h6v6"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
-  gift: '<path d="M20 12v10H4V12M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/>',
   star: '<path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8-6.2-3.2-6.2 3.2L7 14.2 2 9.3l6.9-1z"/>',
   chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
@@ -736,6 +735,18 @@ function renderJoin(from) {
     ['users', 'برای یک یا چند آرایشگر', 'هر آرایشگر حساب و برنامهٔ خودش را دارد.'],
     ['store', 'صفحهٔ اختصاصی آرایشگاه', 'با لوکیشن، اینستاگرام، تلگرام و دامنهٔ اختصاصی.'],
   ];
+  const steps = [
+    ['ثبت درخواست', 'فرم پایین همین صفحه را پر کنید.'],
+    ['هماهنگی', 'با شما تماس می‌گیریم تا پلن و اطلاعات آرایشگاه را مشخص کنیم.'],
+    ['راه‌اندازی', `سایت و دامنهٔ اختصاصی شما ${fa(2)} تا ${fa(5)} روزه آماده می‌شود.`],
+    ['شروع نوبت‌دهی', 'آدرس سایت را به مشتری‌ها بدهید و نوبت‌ها را از گوشی ثبت کنید.'],
+  ];
+  const faqs = [
+    ['راه‌اندازی سایت چقدر طول می‌کشد؟',
+      `بعد از ثبت سفارش، ${fa(2)} تا ${fa(5)} روز. این زمان برای راه‌اندازی سایت و خرید دامنهٔ اختصاصی آرایشگاه شماست.`],
+    ['دامنهٔ اختصاصی هزینهٔ جدا دارد؟', 'نه. هزینهٔ خرید دامنهٔ اختصاصی با ماست.'],
+    ['اگر اشتراک تمام شود چه می‌شود؟', `بعد از پایان اشتراک، ${fa(7)} روز مهلت دارید تا آن را تمدید کنید.`],
+  ];
   // تعرفه‌ها (تومان). صرفه‌جویی نسبت به پرداخت ماهانه حساب می‌شود
   const MONTHLY = 1000000;
   const plans = [
@@ -764,20 +775,28 @@ function renderJoin(from) {
           <button class="btn btn-primary btn-lg" data-action="join-form">${icon('check')}درخواست ساخت سایت</button>
           <button class="btn btn-lg" data-action="join-contact">${icon('phone')}تماس با ما</button>
         </div>
+        <div class="join-count hidden" id="joinCount"></div>
       </section>
 
       <section class="join-features">
         ${features.map(([ic, t, d]) => `<div class="feature"><span class="feature-icon">${icon(ic)}</span><div><b>${t}</b><p>${d}</p></div></div>`).join('')}
       </section>
 
+      <section class="join-steps">
+        <h2>چطور شروع کنیم؟</h2>
+        <ol class="steps">
+          ${steps.map(([t, d], i) => `<li><span class="step-n">${fa(i + 1)}</span><div><b>${t}</b><p>${d}</p></div></li>`).join('')}
+        </ol>
+      </section>
+
       <section class="pricing">
         <h2>تعرفه‌ها</h2>
         <div class="plans">${plans.map(planHTML).join('')}</div>
-        <div class="gift">
-          <span class="gift-icon">${icon('gift')}</span>
-          <div><b>یک ماه رایگان هدیه بگیرید!</b>
-            <p>با یک پست مشترک در پیج اینستاگرام آرایشگاهتان که ما را معرفی کند.</p></div>
-        </div>
+      </section>
+
+      <section class="faq">
+        <h2>سؤال‌های رایج</h2>
+        ${faqs.map(([q, a]) => `<details><summary>${q}</summary><p>${a}</p></details>`).join('')}
       </section>
 
       <div class="card join-box" id="joinBox">
@@ -818,6 +837,14 @@ function renderJoin(from) {
         <button class="btn btn-primary btn-lg btn-block" data-action="join-form">${icon('check')}درخواست ساخت سایت</button>
       </div>
     </div>`;
+
+  // تعداد آرایشگاه‌های فعال (همان لیست عمومی صفحهٔ اصلی)
+  api('GET', '/shops').then(({ shops }) => {
+    const el = $('#joinCount');
+    if (!el || !shops.length) return;
+    el.innerHTML = `${icon('store')}<span>هم‌اکنون <b>${fa(shops.length)}</b> آرایشگاه با این سایت نوبت‌دهی ${shops.length > 1 ? 'می‌کنند' : 'می‌کند'}</span>`;
+    el.classList.remove('hidden');
+  }).catch(() => {});
 
   // راه‌های تماس از سرور خوانده می‌شود تا فقط یک جا تعریف شوند
   api('GET', '/support').then(({ support }) => {
