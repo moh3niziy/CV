@@ -731,10 +731,10 @@ function promoHTML() {
 function renderJoin(from) {
   renderTopbar('join');
   const features = [
-    ['calendar', 'زمان‌های خالی، آنلاین', 'مشتری قبل از تماس می‌بیند کِی وقت دارید؛ بدون تماس‌های بی‌نتیجه.'],
-    ['clock', 'ثبت نوبت با یک کلیک', 'خدمات و مدت هرکدام را یک بار تعریف کنید؛ پایان نوبت خودکار حساب می‌شود.'],
-    ['users', 'برای یک یا چند آرایشگر', 'هر آرایشگر حساب و برنامهٔ خودش را دارد و شما همه را مدیریت می‌کنید.'],
-    ['store', 'صفحهٔ اختصاصی آرایشگاه', 'با لوکیشن، اینستاگرام، تلگرام و حتی دامنهٔ اختصاصی خودتان.'],
+    ['calendar', 'زمان‌های خالی، آنلاین', 'مشتری قبل از تماس می‌بیند کِی وقت دارید.'],
+    ['clock', 'ثبت نوبت با یک کلیک', 'پایان نوبت خودکار حساب می‌شود.'],
+    ['users', 'برای یک یا چند آرایشگر', 'هر آرایشگر حساب و برنامهٔ خودش را دارد.'],
+    ['store', 'صفحهٔ اختصاصی آرایشگاه', 'با لوکیشن، اینستاگرام، تلگرام و دامنهٔ اختصاصی.'],
   ];
   // تعرفه‌ها (تومان). صرفه‌جویی نسبت به پرداخت ماهانه حساب می‌شود
   const MONTHLY = 1000000;
@@ -776,7 +776,7 @@ function renderJoin(from) {
         <div class="gift">
           <span class="gift-icon">${icon('gift')}</span>
           <div><b>یک ماه رایگان هدیه بگیرید!</b>
-            <p>با معرفی ما در پیج اینستاگرام آرایشگاهتان (پست مشترک)، یک ماه اشتراک رایگان به اشتراکتان اضافه می‌شود.</p></div>
+            <p>با یک پست مشترک در پیج اینستاگرام آرایشگاهتان که ما را معرفی کند.</p></div>
         </div>
       </section>
 
@@ -789,12 +789,20 @@ function renderJoin(from) {
               <input class="input" id="jName" name="name" maxlength="60" required autocomplete="name">
             </div>
             <div class="field">
+              <label for="jShop">نام آرایشگاه</label>
+              <input class="input" id="jShop" name="shop" maxlength="60" required autocomplete="organization">
+            </div>
+            <div class="field">
               <label for="jPhone">شماره تماس</label>
               <input class="input ltr-input" id="jPhone" name="phone" type="tel" inputmode="tel" maxlength="16" required autocomplete="tel" placeholder="۰۹۱۲۰۰۰۰۰۰۰">
             </div>
             <div class="field">
+              <label for="jCity">شهر <span class="muted" style="font-weight:400">(اختیاری)</span></label>
+              <input class="input" id="jCity" name="city" maxlength="40" autocomplete="address-level2">
+            </div>
+            <div class="field">
               <label for="jNote">توضیحات <span class="muted" style="font-weight:400">(اختیاری)</span></label>
-              <textarea class="input" id="jNote" name="note" rows="3" maxlength="600" placeholder="نام آرایشگاه، شهر، تعداد آرایشگرها یا هر سؤالی که دارید"></textarea>
+              <textarea class="input" id="jNote" name="note" rows="3" maxlength="600" placeholder="تعداد آرایشگرها یا هر سؤالی که دارید"></textarea>
             </div>
             <input type="text" name="website" id="jWebsite" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
             <button class="btn btn-primary btn-lg btn-block" id="joinSave">${icon('check')}ارسال درخواست</button>
@@ -834,14 +842,15 @@ function renderJoin(from) {
     btn.disabled = true;
     try {
       const res = await api('POST', '/leads', {
-        name: $('#jName').value.trim(), phone: toEn($('#jPhone').value), note: $('#jNote').value.trim(),
+        name: $('#jName').value.trim(), shopName: $('#jShop').value.trim(), phone: toEn($('#jPhone').value),
+        city: $('#jCity').value.trim(), note: $('#jNote').value.trim(),
         website: $('#jWebsite').value, source: from || '',
       });
       $('#joinBox').innerHTML = `
         <div class="empty" style="padding:20px 8px 8px">
           <div class="big-icon" style="background:var(--free-soft);color:var(--free)">${icon('check')}</div>
           <h3>درخواست شما ثبت شد</h3>
-          <p>به‌زودی برای هماهنگی با شما تماس می‌گیریم. اگر عجله دارید، مستقیم پیام بدهید:</p>
+          <p>به‌زودی برای هماهنگی با شما تماس می‌گیریم. اگر تا ۲۴ ساعت آینده تماسی از ما نداشتید، لطفاً خودتان با ما تماس بگیرید:</p>
         </div>
         ${supportHTML(res.support)}`;
     } catch (err) {
@@ -866,6 +875,7 @@ function leadsHTML() {
         <div><b>${esc(l.name)}</b> <span class="badge lead-badge">${LEAD_STATUS.find(([k]) => k === l.status)?.[1] || ''}</span></div>
         <span class="muted" style="font-size:12.5px">${when}</span>
       </div>
+      ${l.shopName || l.city ? `<div class="lead-shop">${icon('store')}<span>${esc(l.shopName || '—')}${l.city ? `<span class="muted">، ${esc(l.city)}</span>` : ''}</span></div>` : ''}
       <div class="support" style="margin:8px 0">
         <a class="btn" href="tel:${esc(l.phone)}">${icon('phone')}<span class="ltr">${fa(esc(l.phone))}</span></a>
         <a class="btn" href="sms:${esc(l.phone)}">${icon('chat')}پیامک</a>

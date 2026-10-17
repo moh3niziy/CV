@@ -96,10 +96,11 @@ async function migrate(db) {
   ]);
   secret = (await db.prepare("SELECT value FROM meta WHERE key = 'secret'").first()).value;
   // ستون‌هایی که بعداً اضافه شده‌اند
-  for (const col of ['active INTEGER NOT NULL DEFAULT 1', "telegram TEXT NOT NULL DEFAULT ''", "instagram TEXT NOT NULL DEFAULT ''",
-    "expires_at TEXT NOT NULL DEFAULT ''"]) {
+  for (const [table, col] of [['shops', 'active INTEGER NOT NULL DEFAULT 1'], ['shops', "telegram TEXT NOT NULL DEFAULT ''"],
+    ['shops', "instagram TEXT NOT NULL DEFAULT ''"], ['shops', "expires_at TEXT NOT NULL DEFAULT ''"],
+    ['leads', "shop_name TEXT NOT NULL DEFAULT ''"], ['leads', "city TEXT NOT NULL DEFAULT ''"]]) {
     try {
-      await db.prepare(`ALTER TABLE shops ADD COLUMN ${col}`).run();
+      await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col}`).run();
     } catch (err) {
       if (!/duplicate column/i.test(String(err && err.message))) throw err;
     }
@@ -388,15 +389,19 @@ async function handleApi(request, env, path) {
     const name = String(body.name || '').trim();
     const phone = toEn(body.phone).replace(/[\s-]/g, '');
     const note = String(body.note || '').trim();
+    const shopName = String(body.shopName || '').trim();
+    const city = String(body.city || '').trim();
     if (name.length < 2 || name.length > 60) throw new HttpError(400, 'نام را وارد کنید');
+    if (shopName.length < 2 || shopName.length > 60) throw new HttpError(400, 'نام آرایشگاه را وارد کنید');
     if (!/^(\+98|0098|0)?9\d{9}$/.test(phone) && !/^0\d{10}$/.test(phone)) throw new HttpError(400, 'شماره تماس معتبر نیست');
+    if (city.length > 40) throw new HttpError(400, 'نام شهر طولانی است');
     if (note.length > 600) throw new HttpError(400, 'توضیحات طولانی است');
     const ip = request.headers.get('cf-connecting-ip') || '';
     const recent = await db.prepare('SELECT COUNT(*) AS n FROM leads WHERE ip = ? AND created_at > ?').bind(ip, Date.now() - 3600e3).first();
     if (ip && recent.n >= 5) throw new HttpError(429, 'تعداد درخواست‌ها زیاد است؛ کمی بعد دوباره تلاش کنید');
     const source = String(body.source || '').slice(0, 20) || null;
-    await db.prepare('INSERT INTO leads (id, name, phone, note, source_shop, status, ip, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(newId(), name, phone, note, source, 'new', ip, Date.now()).run();
+    await db.prepare(`INSERT INTO leads (id, name, phone, shop_name, city, note, source_shop, status, ip, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(newId(), name, phone, shopName, city, note, source, 'new', ip, Date.now()).run();
     return json({ ok: true, support: SUPPORT });
   }
 
@@ -406,7 +411,7 @@ async function handleApi(request, env, path) {
     if (auth.r !== 'super') throw new HttpError(403, 'به این بخش دسترسی ندارید');
     const leadId = parts[2];
     if (method === 'GET' && !leadId) {
-      const { results } = await db.prepare(`SELECT l.id, l.name, l.phone, l.note, l.status, l.created_at AS createdAt,
+      const { results } = await db.prepare(`SELECT l.id, l.name, l.phone, l.shop_name AS shopName, l.city, l.note, l.status, l.created_at AS createdAt,
         l.source_shop AS sourceShop, s.name AS sourceName FROM leads l LEFT JOIN shops s ON s.id = l.source_shop
         ORDER BY l.created_at DESC LIMIT 300`).all();
       return json({ leads: results });
