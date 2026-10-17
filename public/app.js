@@ -184,7 +184,7 @@ async function saveAdmin(data) {
 // خواندن آخرین نسخه، اعمال تغییر و ذخیره؛ اگر دستگاه دیگری هم‌زمان ذخیره کرده باشد دوباره تلاش می‌کند
 async function mutate(fn) {
   for (let attempt = 0; ; attempt++) {
-    const data = structuredClone(await loadAdmin());
+    const data = JSON.parse(JSON.stringify(await loadAdmin()));
     const result = fn(data);
     try {
       await saveAdmin(data);
@@ -324,7 +324,7 @@ function timelineHTML(plan, { customer = false } = {}) {
   for (const a of [...plan.list].sort((x, y) => toMin(x.start) - toMin(y.start))) {
     const s = Math.max(toMin(a.start), open), e = Math.min(toMin(a.end), close);
     if (e <= s) continue;
-    const last = busy.at(-1);
+    const last = busy[busy.length - 1];
     if (last && s <= last[1]) last[1] = Math.max(last[1], e);
     else busy.push([s, e]);
   }
@@ -333,7 +333,7 @@ function timelineHTML(plan, { customer = false } = {}) {
   const segs = [];
   const push = (kind, s, e) => {
     if (e <= s) return;
-    const last = segs.at(-1);
+    const last = segs[segs.length - 1];
     if (last && last.kind === kind && last.e === s) last.e = e;
     else segs.push({ kind, s, e });
   };
@@ -745,11 +745,11 @@ function renderJoin(from) {
     ['store', 'صفحهٔ اختصاصی آرایشگاه', 'با لوکیشن، اینستاگرام، تلگرام و حتی دامنهٔ اختصاصی خودتان.'],
   ];
   // تعرفه‌ها (تومان). صرفه‌جویی نسبت به پرداخت ماهانه حساب می‌شود
-  const MONTHLY = 1_000_000;
+  const MONTHLY = 1000000;
   const plans = [
-    { months: 1, price: 1_000_000, title: 'ماهانه' },
-    { months: 3, price: 2_000_000, title: 'سه‌ماهه' },
-    { months: 6, price: 3_000_000, title: 'شش‌ماهه', best: true },
+    { months: 1, price: 1000000, title: 'ماهانه' },
+    { months: 3, price: 2000000, title: 'سه‌ماهه' },
+    { months: 6, price: 3000000, title: 'شش‌ماهه', best: true },
   ];
   const toman = (n) => n >= 1e6 && n % 1e6 === 0 ? `${fa(n / 1e6)} میلیون` : `${fa(Math.round(n / 1e3).toLocaleString('en'))} هزار`;
   const planHTML = (p) => {

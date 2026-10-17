@@ -36,6 +36,23 @@
   <div id="modalRoot"></div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
+  <script>
+    // اگر مرورگری کد سایت را اجرا نکند، به‌جای صفحهٔ سفید پیام خطا نمایش داده می‌شود
+    (function () {
+      function show(msg) {
+        var app = document.getElementById('app');
+        if (!app || app.getAttribute('data-crashed') || app.querySelector('.page, .expired-wrap')) return; // صفحه قبلاً درست ساخته شده
+        app.setAttribute('data-crashed', '1');
+        app.innerHTML = '<div style="max-width:440px;margin:60px auto;padding:20px;border-radius:16px;border:1px solid #e3e3ec;background:#fff;color:#17171f;text-align:center;font-family:Vazirmatn,Tahoma,sans-serif;direction:rtl">' +
+          '<b style="font-size:17px">صفحه در این مرورگر درست بارگذاری نشد</b>' +
+          '<p style="color:#6b6b7b;font-size:13.5px">لطفاً مرورگر را به‌روز کنید یا صفحه را در Chrome باز کنید. اگر مشکل ادامه داشت، از همین پیام عکس بگیرید و برای پشتیبانی بفرستید.</p>' +
+          '<pre style="direction:ltr;text-align:left;white-space:pre-wrap;font-size:11px;background:#f0f0f5;padding:10px;border-radius:10px;color:#444">' +
+          String(msg).replace(/</g, '&lt;') + '\n\n' + navigator.userAgent.replace(/</g, '&lt;') + '</pre></div>';
+      }
+      window.addEventListener('error', function (e) { show((e.message || 'Error') + (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : '')); });
+      window.addEventListener('unhandledrejection', function (e) { show('Promise: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
+    })();
+  </script>
   <script src="/app.js"></script>
 </body>
 </html>
