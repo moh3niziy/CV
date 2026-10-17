@@ -108,7 +108,8 @@ async function migrate(db) {
     ['shops', "instagram TEXT NOT NULL DEFAULT ''"], ['shops', "expires_at TEXT NOT NULL DEFAULT ''"],
     ['leads', "shop_name TEXT NOT NULL DEFAULT ''"], ['leads', "city TEXT NOT NULL DEFAULT ''"],
     ['leads', 'plan INTEGER NOT NULL DEFAULT 0'], ['leads', "token TEXT NOT NULL DEFAULT ''"],
-    ['receipts', "status TEXT NOT NULL DEFAULT 'new'"], ['leads', "shop_id TEXT NOT NULL DEFAULT ''"]]) {
+    ['receipts', "status TEXT NOT NULL DEFAULT 'new'"], ['leads', "shop_id TEXT NOT NULL DEFAULT ''"],
+    ['shops', "owner_name TEXT NOT NULL DEFAULT ''"], ['shops', "owner_phone TEXT NOT NULL DEFAULT ''"]]) {
     try {
       await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col}`).run();
     } catch (err) {
@@ -256,6 +257,16 @@ function cleanShop(body) {
   };
 }
 
+// نام و تلفن مالک (اختیاری): فقط برای مدیر سایت، برای تماس و تمدید؛ به مشتری‌ها نمایش داده نمی‌شود
+function cleanOwnerContact(body) {
+  const ownerName = String(body?.ownerName || '').trim();
+  const raw = String(body?.ownerPhone || '').trim();
+  if (ownerName.length > 60) throw new HttpError(400, 'نام مالک طولانی است');
+  const ownerPhone = raw ? cleanPhone(raw) : '';
+  if (raw && !ownerPhone) throw new HttpError(400, 'شماره تلفن مالک معتبر نیست');
+  return { ownerName, ownerPhone };
+}
+
 // صفحات مجازی اختیاری‌اند؛ آیدی یا لینک کامل پذیرفته و فقط آیدی ذخیره می‌شود
 function cleanSocial(value, urlRe, idRe, label) {
   let v = String(value || '').trim();
@@ -385,12 +396,13 @@ async function handleApi(request, env, path) {
       // آرایشگاه‌های غیرفعال فقط برای مدیر سایت نمایش داده می‌شوند
       const all = auth?.r === 'super';
       const { results } = await db.prepare(`SELECT id, name, location, active, expires_at,
+        owner_name AS ownerName, owner_phone AS ownerPhone,
         COALESCE(json_array_length(data, '$.barbers'), 0) AS barbers
         FROM shops ORDER BY created_at`).all();
       const shops = results
         .map(({ expires_at: e, ...r }) => ({ ...r, active: !!r.active, sub: subStatus(e) }))
         .filter((r) => all || (r.active && r.sub.state !== 'expired'));
-      return json({ shops: all ? shops : shops.map(({ sub, ...r }) => r) });
+      return json({ shops: all ? shops : shops.map(({ sub, ownerName, ownerPhone, ...r }) => r) });
     }
     if (method === 'GET' && parts.length === 2) {
       const shop = await getShop(db, id);
@@ -581,11 +593,12 @@ async function handleApi(request, env, path) {
     // پلن انتخابی مدیر سایت در فرم بر پلن سفارش مقدم است
     const plan = PLAN_MONTHS.includes(Number(body.plan)) ? Number(body.plan) : lead && PLAN_MONTHS.includes(lead.plan) ? lead.plan : 0;
     const days = plan ? plan * 30 : FREE_DAYS;
-    const shop = { id: newId(), ...cleanShop(body), expiresAt: addDaysISO(localNow().date, days) };
+    const shop = { id: newId(), ...cleanShop(body), ...cleanOwnerContact(body), expiresAt: addDaysISO(localNow().date, days) };
     const ownerOps = await setOwner(db, shop.id, body.ownerUsername, body.ownerPassword, true);
     await db.batch([
-      db.prepare('INSERT INTO shops (id, name, location, telegram, instagram, expires_at, data, version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)')
-        .bind(shop.id, shop.name, shop.location, shop.telegram, shop.instagram, shop.expiresAt, JSON.stringify(EMPTY), Date.now()),
+      db.prepare(`INSERT INTO shops (id, name, location, telegram, instagram, owner_name, owner_phone, expires_at, data, version, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`)
+        .bind(shop.id, shop.name, shop.location, shop.telegram, shop.instagram, shop.ownerName, shop.ownerPhone, shop.expiresAt, JSON.stringify(EMPTY), Date.now()),
       ...ownerOps,
       ...(lead ? [db.prepare("UPDATE leads SET status = 'done', shop_id = ?, plan = ? WHERE id = ?").bind(shop.id, plan || lead.plan, lead.id)] : []),
     ]);
@@ -601,9 +614,12 @@ async function handleApi(request, env, path) {
       const info = cleanShop(body);
       await getShop(db, id);
       const ownerOps = await setOwner(db, id, body.ownerUsername, body.ownerPassword, false);
+      // نام و تلفن مالک را فقط مدیر سایت (از فرم ویرایش خودش) تغییر می‌دهد
+      const contact = auth.r === 'super' && ('ownerName' in body || 'ownerPhone' in body) ? cleanOwnerContact(body) : null;
       await db.batch([
         db.prepare('UPDATE shops SET name = ?, location = ?, telegram = ?, instagram = ? WHERE id = ?')
           .bind(info.name, info.location, info.telegram, info.instagram, id),
+        ...(contact ? [db.prepare('UPDATE shops SET owner_name = ?, owner_phone = ? WHERE id = ?').bind(contact.ownerName, contact.ownerPhone, id)] : []),
         ...ownerOps,
       ]);
       return json({ id, ...info, owner: (await shopAccounts(db, id)).owner });

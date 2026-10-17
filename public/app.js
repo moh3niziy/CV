@@ -524,6 +524,7 @@ function renderHome() {
               <div class="name">${esc(x.name)}${x.active === false ? ' <span class="badge">غیرفعال</span>' : ''}</div>
               <div class="sub">${icon('pin')}<span>${/^https?:\/\//i.test(x.location) ? 'لوکیشن روی نقشه' : esc(fa(x.location || '—'))}</span></div>
               <div class="sub">${icon('users')}<span>${x.barbers ? `${fa(x.barbers)} آرایشگر` : 'بدون آرایشگر'}</span></div>
+              ${isSuper() && (x.ownerName || x.ownerPhone) ? `<div class="sub">${icon('user')}<span>${esc(x.ownerName || 'مالک')}${x.ownerPhone ? `، <a class="ltr owner-tel" href="tel:${esc(x.ownerPhone)}">${fa(esc(x.ownerPhone))}</a>` : ''}</span></div>` : ''}
               ${isSuper() && x.sub ? `<div class="sub">${icon('calendar')}${subBadgeHTML(x.sub)}</div>` : ''}
             </div>
             ${isSuper() ? `<div class="shop-actions">
@@ -604,6 +605,17 @@ async function openShopModal(shop, prefill) {
           <span class="hint">آدرس متنی یا لینک نقشه؛ برای مشتری‌ها با دکمهٔ «نمایش روی نقشه» نشان داده می‌شود.</span>
         </div>
         ${socialFieldsHTML('s', shop)}
+        <div class="row cred-row">
+          <div class="field">
+            <label for="sOwnerName">${icon('user')} نام مالک <span class="muted" style="font-weight:400">(اختیاری)</span></label>
+            <input class="input" id="sOwnerName" maxlength="60" value="${esc(shop?.ownerName || prefill?.person || '')}" placeholder="مثلاً رضا محمدی">
+          </div>
+          <div class="field">
+            <label for="sOwnerPhone">${icon('phone')} شماره تلفن مالک <span class="muted" style="font-weight:400">(اختیاری)</span></label>
+            <input class="input ltr-input" id="sOwnerPhone" type="tel" inputmode="tel" maxlength="16" value="${esc(shop?.ownerPhone || prefill?.phone || '')}" placeholder="۰۹۱۲۰۰۰۰۰۰۰">
+          </div>
+        </div>
+        <span class="hint" style="display:block;margin:-8px 0 16px">فقط برای شما نمایش داده می‌شود (برای تماس و تمدید).</span>
         ${credFieldsHTML('o', owner || prefill?.ownerUsername || '', !shop || !owner, 'حساب مالک آرایشگاه')}
       </form>
       <div class="modal-foot">
@@ -631,6 +643,7 @@ async function openShopModal(shop, prefill) {
       name: $('#sName').value.trim(), location: $('#sLoc').value.trim(),
       instagram: $('#sIg').value.trim(), telegram: $('#sTg').value.trim(),
       ownerUsername: toEn($('#oUser').value).toLowerCase(), ownerPassword: toEn($('#oPass').value),
+      ownerName: $('#sOwnerName').value.trim(), ownerPhone: toEn($('#sOwnerPhone').value),
       leadId: prefill?.leadId || undefined,
       plan: prefill ? shopPlan : undefined,
     };
@@ -2008,6 +2021,7 @@ document.addEventListener('click', async (ev) => {
       return;
     }
     case 'open-shop':
+      if (ev.target.closest('a')) return; // لینک تلفن مالک داخل کارت
       location.hash = `#/s/${encodeURIComponent(el.dataset.id)}`;
       return;
     case 'new-shop':
@@ -2064,7 +2078,7 @@ document.addEventListener('click', async (ev) => {
       const l = (state.leads || []).find((x) => x.id === el.dataset.id);
       if (!l) return;
       return openShopModal(null, {
-        leadId: l.id, person: l.name, plan: l.plan, name: l.shopName || '', location: l.city || '',
+        leadId: l.id, person: l.name, phone: l.phone, plan: l.plan, name: l.shopName || '', location: l.city || '',
         ownerUsername: /^09\d{9}$/.test(l.phone) ? l.phone : '',
       });
     }
