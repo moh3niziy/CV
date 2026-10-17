@@ -751,7 +751,7 @@ function renderJoin(from) {
       <div class="plan-title">${p.title}</div>
       <div class="plan-price"><b>${toman(p.price)}</b> تومان</div>
       <div class="plan-per">${p.months > 1 ? `ماهی ${toman(p.price / p.months)} تومان` : 'پرداخت ماه‌به‌ماه'}</div>
-      ${save > 0 ? `<div class="plan-save">${fa(Math.round(save / (MONTHLY * p.months) * 100))}٪ تخفیف · ${toman(save)} تومان صرفه‌جویی</div>` : '<div class="plan-save muted-save">بدون تعهد بلندمدت</div>'}
+      ${save > 0 ? `<div class="plan-save">${fa(Math.round(save / (MONTHLY * p.months) * 100))}٪ تخفیف، ${toman(save)} تومان صرفه‌جویی</div>` : '<div class="plan-save muted-save">بدون تعهد بلندمدت</div>'}
     </div>`;
   };
 
@@ -760,7 +760,14 @@ function renderJoin(from) {
       <section class="join-hero">
         <h1>سایت نوبت‌دهی اختصاصی برای آرایشگاه شما</h1>
         <p>دفترچهٔ نوبت را کنار بگذارید. مشتری‌ها زمان‌های خالی را آنلاین می‌بینند و شما نوبت‌ها را از گوشی مدیریت می‌کنید.</p>
-        <div class="join-contact" id="joinContactTop"></div>
+        <div class="join-cta">
+          <button class="btn btn-primary btn-lg" data-action="join-form">${icon('check')}درخواست ساخت سایت</button>
+          <button class="btn btn-lg" data-action="join-contact">${icon('phone')}تماس با ما</button>
+        </div>
+      </section>
+
+      <section class="join-features">
+        ${features.map(([ic, t, d]) => `<div class="feature"><span class="feature-icon">${icon(ic)}</span><div><b>${t}</b><p>${d}</p></div></div>`).join('')}
       </section>
 
       <section class="pricing">
@@ -773,11 +780,7 @@ function renderJoin(from) {
         </div>
       </section>
 
-      <div class="join-grid">
-        <div class="join-features">
-          ${features.map(([ic, t, d]) => `<div class="feature"><span class="feature-icon">${icon(ic)}</span><div><b>${t}</b><p>${d}</p></div></div>`).join('')}
-        </div>
-        <div class="card" id="joinBox">
+      <div class="card join-box" id="joinBox">
           <h2 style="margin:0 0 4px;font-size:18px">درخواست ساخت سایت</h2>
           <p class="muted" style="margin:0 0 16px;font-size:13.5px">اطلاعاتتان را بگذارید، برای هماهنگی با شما تماس می‌گیریم.</p>
           <form id="joinForm" autocomplete="on">
@@ -796,19 +799,34 @@ function renderJoin(from) {
             <input type="text" name="website" id="jWebsite" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
             <button class="btn btn-primary btn-lg btn-block" id="joinSave">${icon('check')}ارسال درخواست</button>
           </form>
-        </div>
       </div>
 
-      <section class="join-bottom">
+      <section class="join-bottom" id="joinBottom">
         <b>سؤالی دارید؟ مستقیم با ما در تماس باشید</b>
         <div class="join-contact" id="joinContactBottom"></div>
       </section>
+
+      <div class="join-sticky" id="joinSticky">
+        <button class="btn btn-primary btn-lg btn-block" data-action="join-form">${icon('check')}درخواست ساخت سایت</button>
+      </div>
     </div>`;
 
   // راه‌های تماس از سرور خوانده می‌شود تا فقط یک جا تعریف شوند
   api('GET', '/support').then(({ support }) => {
-    ['#joinContactTop', '#joinContactBottom'].forEach((sel) => { const el = $(sel); if (el) el.innerHTML = supportHTML(support); });
+    const el = $('#joinContactBottom');
+    if (el) el.innerHTML = supportHTML(support);
   }).catch(() => {});
+
+  // دکمهٔ ثابت پایین صفحه وقتی دکمه‌های بالای صفحه، فرم یا بخش تماس دیده می‌شوند پنهان می‌شود
+  const sticky = $('#joinSticky');
+  const watched = [$('.join-cta'), $('#joinBox'), $('#joinBottom')];
+  const updateSticky = () => {
+    if (!document.body.contains(sticky)) { window.removeEventListener('scroll', updateSticky); return; }
+    const vh = window.innerHeight;
+    sticky.classList.toggle('off', watched.some((el) => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < vh; }));
+  };
+  window.addEventListener('scroll', updateSticky, { passive: true });
+  updateSticky();
 
   $('#joinForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -842,7 +860,7 @@ function leadsHTML() {
   }
   return `<div class="leads">${leads.map((l) => {
     const d = new Date(l.createdAt);
-    const when = `${shortDate(isoOf(d))} · ${faTime(d.getHours() * 60 + d.getMinutes())}`;
+    const when = `${shortDate(isoOf(d))}، ساعت ${faTime(d.getHours() * 60 + d.getMinutes())}`;
     return `<div class="card lead lead-${l.status}">
       <div class="lead-head">
         <div><b>${esc(l.name)}</b> <span class="badge lead-badge">${LEAD_STATUS.find(([k]) => k === l.status)?.[1] || ''}</span></div>
@@ -972,7 +990,7 @@ const daysBetween = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.pa
 function subBadgeHTML(sub) {
   if (!sub?.expiresAt) return '<span class="badge sb-ok">بدون محدودیت</span>';
   if (sub.state === 'expired') return `<span class="badge sb-bad">منقضی از ${shortDate(sub.expiresAt)}</span>`;
-  if (sub.state === 'grace') return `<span class="badge sb-bad">مهلت تمدید · ${sub.graceLeft ? `${fa(sub.graceLeft)} روز` : 'امروز'}</span>`;
+  if (sub.state === 'grace') return `<span class="badge sb-bad">${sub.graceLeft ? `${fa(sub.graceLeft)} روز مهلت تمدید` : 'آخرین روز مهلت تمدید'}</span>`;
   const label = sub.daysLeft === 0 ? 'امروز تمام می‌شود' : `${fa(sub.daysLeft)} روز مانده`;
   return `<span class="badge ${sub.state === 'warning' ? 'sb-warn' : 'sb-ok'}">${label}</span>`;
 }
@@ -1205,7 +1223,7 @@ function hoursSummary(b) {
   const first = b.hours[on[0][0]];
   const same = on.every(([k]) => b.hours[k].start === first.start && b.hours[k].end === first.end);
   const days = on.length === 7 ? 'همه روزه' : on.length === 6 && !b.hours['5'].on ? 'شنبه تا پنجشنبه' : `${fa(on.length)} روز در هفته`;
-  return same ? `${days} · ${faTime(first.start)} تا ${faTime(first.end)}` : days;
+  return same ? `${days}، ${faTime(first.start)} تا ${faTime(first.end)}` : days;
 }
 
 // مالک می‌تواند خودش را هم به‌عنوان آرایشگر اضافه کند
@@ -1658,6 +1676,14 @@ document.addEventListener('click', async (ev) => {
       return openShopModal(null);
     case 'edit-shop':
       return openShopModal(state.shops.find((x) => x.id === el.dataset.id));
+    case 'join-form': {
+      $('#joinBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const name = $('#jName');
+      if (name) setTimeout(() => name.focus({ preventScroll: true }), 450);
+      return;
+    }
+    case 'join-contact':
+      return $('#joinBottom').scrollIntoView({ behavior: 'smooth', block: 'center' });
     case 'home-tab':
       state.homeTab = el.dataset.tab;
       return render(false);
