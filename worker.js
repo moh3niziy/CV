@@ -82,6 +82,9 @@ async function migrate(db) {
       shop_id TEXT NOT NULL, username TEXT NOT NULL, pass TEXT NOT NULL,
       role TEXT NOT NULL, barber_id TEXT, PRIMARY KEY (shop_id, username))`),
     db.prepare('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)'),
+    db.prepare(`CREATE TABLE IF NOT EXISTS leads (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT NOT NULL, note TEXT NOT NULL,
+      source_shop TEXT, status TEXT NOT NULL DEFAULT 'new', ip TEXT, created_at INTEGER NOT NULL)`),
     db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('secret', ?)").bind(randomHex(32)),
   ]);
   secret = (await db.prepare("SELECT value FROM meta WHERE key = 'secret'").first()).value;
@@ -361,6 +364,50 @@ async function handleApi(request, env, path) {
         token: await makeToken({ r: acc.role, s: id, u: acc.username, h: passMark(acc.pass) }),
         role: acc.role, shopId: id, barberId: acc.barber_id, name,
       });
+    }
+    throw new HttpError(404, 'مسیر پیدا نشد');
+  }
+
+  // ---- درخواست ساخت سایت از صفحهٔ «تو هم می‌خواهی؟» (عمومی)
+  if (method === 'POST' && path === '/api/leads') {
+    const body = await readJson(request);
+    if (body.website) return json({ ok: true }); // فیلد مخفی ضد ربات
+    const name = String(body.name || '').trim();
+    const phone = toEn(body.phone).replace(/[\s-]/g, '');
+    const note = String(body.note || '').trim();
+    if (name.length < 2 || name.length > 60) throw new HttpError(400, 'نام را وارد کنید');
+    if (!/^(\+98|0098|0)?9\d{9}$/.test(phone) && !/^0\d{10}$/.test(phone)) throw new HttpError(400, 'شماره تماس معتبر نیست');
+    if (note.length > 600) throw new HttpError(400, 'توضیحات طولانی است');
+    const ip = request.headers.get('cf-connecting-ip') || '';
+    const recent = await db.prepare('SELECT COUNT(*) AS n FROM leads WHERE ip = ? AND created_at > ?').bind(ip, Date.now() - 3600e3).first();
+    if (ip && recent.n >= 5) throw new HttpError(429, 'تعداد درخواست‌ها زیاد است؛ کمی بعد دوباره تلاش کنید');
+    const source = String(body.source || '').slice(0, 20) || null;
+    await db.prepare('INSERT INTO leads (id, name, phone, note, source_shop, status, ip, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(newId(), name, phone, note, source, 'new', ip, Date.now()).run();
+    return json({ ok: true, support: SUPPORT });
+  }
+
+  // ---- مدیریت درخواست‌ها (فقط مدیر سایت)
+  if (parts[0] === 'admin' && parts[1] === 'leads') {
+    requireAuth(auth);
+    if (auth.r !== 'super') throw new HttpError(403, 'به این بخش دسترسی ندارید');
+    const leadId = parts[2];
+    if (method === 'GET' && !leadId) {
+      const { results } = await db.prepare(`SELECT l.id, l.name, l.phone, l.note, l.status, l.created_at AS createdAt,
+        l.source_shop AS sourceShop, s.name AS sourceName FROM leads l LEFT JOIN shops s ON s.id = l.source_shop
+        ORDER BY l.created_at DESC LIMIT 300`).all();
+      return json({ leads: results });
+    }
+    if (method === 'PUT' && leadId) {
+      const { status } = await readJson(request);
+      if (!['new', 'contacted', 'done', 'rejected'].includes(status)) throw new HttpError(400, 'وضعیت نامعتبر است');
+      const res = await db.prepare('UPDATE leads SET status = ? WHERE id = ?').bind(status, leadId).run();
+      if (!res.meta.changes) throw new HttpError(404, 'درخواست پیدا نشد');
+      return json({ id: leadId, status });
+    }
+    if (method === 'DELETE' && leadId) {
+      await db.prepare('DELETE FROM leads WHERE id = ?').bind(leadId).run();
+      return json({ id: leadId });
     }
     throw new HttpError(404, 'مسیر پیدا نشد');
   }

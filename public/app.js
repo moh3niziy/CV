@@ -436,11 +436,12 @@ function emptyHTML(ic, title, text, action = '') {
 }
 
 function renderTopbar(view) {
-  const shopName = view === 'home' ? 'آرایشگاه‌ها' : state.shop?.name || 'آرایشگاه';
+  const shopName = view === 'home' ? 'آرایشگاه‌ها' : view === 'join' ? 'نوبت‌دهی آنلاین' : state.shop?.name || 'آرایشگاه';
   const shopHref = `#/s/${encodeURIComponent(state.shopId || '')}`;
   $('#shopName').textContent = shopName;
-  $('.brand').setAttribute('href', view === 'home' ? '#/' : shopHref);
+  $('.brand').setAttribute('href', view === 'home' ? '#/' : view === 'join' ? '#/join' : shopHref);
   document.title = view === 'home' ? 'آرایشگاه‌ها · نوبت‌دهی آنلاین'
+    : view === 'join' ? 'سایت نوبت‌دهی برای آرایشگاه شما'
     : view === 'admin' ? `پنل مدیریت · ${shopName}` : shopName;
   const dark = document.documentElement.dataset.theme === 'dark';
   const themeBtn = `<button class="btn icon-btn" data-action="theme" title="${dark ? 'تم روشن' : 'تم تیره'}" aria-label="تغییر تم">${icon(dark ? 'sun' : 'moon')}</button>`;
@@ -449,6 +450,7 @@ function renderTopbar(view) {
   let actions;
   const who = state.auth ? `<span class="who">${icon('user')}<span>${esc(state.auth.name || '')}</span></span>` : '';
   if (view === 'home') actions = `${themeBtn}${isSuper() ? `${who}${logoutBtn}` : ''}`;
+  else if (view === 'join') actions = themeBtn;
   else if (view === 'admin') actions = `${who}${themeBtn}<a class="btn" href="${shopHref}" title="نمای مشتری">${icon('eye')}<span class="btn-label-sm">نمای مشتری</span></a>${logoutBtn}`;
   else actions = `${shopLinksHTML(state.shop)}${themeBtn}`;
   $('#topActions').innerHTML = actions;
@@ -540,16 +542,21 @@ function renderHome() {
       <div class="card hidden" id="shopNone">${emptyHTML('search', 'آرایشگاهی پیدا نشد', 'عبارت دیگری را جستجو کنید.')}</div>`;
   }
 
+  const leadsTab = isSuper() && state.homeTab === 'leads';
+  const newLeads = (state.leads || []).filter((l) => l.status === 'new').length;
   $('#app').innerHTML = `
     <div class="page">
       <div class="admin-head">
         <section class="hero" style="padding:0">
-          <h1>آرایشگاه موردنظر را انتخاب کنید</h1>
-          <p>زمان‌های خالی هر آرایشگاه را ببینید و برای رزرو تماس بگیرید.</p>
+          <h1>${leadsTab ? 'درخواست‌های ساخت سایت' : 'آرایشگاه موردنظر را انتخاب کنید'}</h1>
+          <p>${leadsTab ? 'افرادی که از صفحهٔ «تو هم می‌خواهی؟» درخواست داده‌اند.' : 'زمان‌های خالی هر آرایشگاه را ببینید و برای رزرو تماس بگیرید.'}</p>
         </section>
-        ${shops.length ? addBtn : ''}
+        ${isSuper() ? `<div class="seg" role="tablist">
+          <button class="${leadsTab ? '' : 'active'}" data-action="home-tab" data-tab="shops">${icon('store')}آرایشگاه‌ها</button>
+          <button class="${leadsTab ? 'active' : ''}" data-action="home-tab" data-tab="leads">${icon('users')}درخواست‌ها${newLeads ? ` <span class="count">${fa(newLeads)}</span>` : ''}</button>
+        </div>` : ''}
       </div>
-      <div style="margin-top:20px">${body}</div>
+      ${leadsTab ? leadsHTML() : `${shops.length && addBtn ? `<div style="margin-top:16px">${addBtn}</div>` : ''}<div style="margin-top:20px">${body}</div>`}
     </div>`;
 
   const search = $('#shopSearch');
@@ -636,7 +643,8 @@ function renderUser() {
   if (!barbers.length) {
     $('#app').innerHTML = `<div class="page">
       <section class="hero"><h1>${esc(state.shop.name)}</h1></section>
-      <div class="card" style="margin-top:20px">${emptyHTML('scissors', 'هنوز آرایشگری ثبت نشده', 'به‌زودی زمان‌های خالی اینجا نمایش داده می‌شود.')}</div></div>`;
+      <div class="card" style="margin-top:20px">${emptyHTML('scissors', 'هنوز آرایشگری ثبت نشده', 'به‌زودی زمان‌های خالی اینجا نمایش داده می‌شود.')}</div>
+      ${promoHTML()}</div>`;
     return;
   }
 
@@ -711,8 +719,113 @@ function renderUser() {
         </div>` : ''}
       </div>
     </div>
+    ${promoHTML()}
   </div>`;
   scrollActiveDay();
+}
+
+/* ================================================================ promo + join page */
+// لینک تبلیغاتی پایین صفحهٔ مشتری همهٔ آرایشگاه‌ها
+function promoHTML() {
+  if (!state.shop) return '';
+  return `<a class="promo" href="#/join/${encodeURIComponent(state.shopId || '')}">
+    <span class="promo-icon">${icon('scissors')}</span>
+    <span>تو هم می‌خوای یک سایت مثل «${esc(state.shop.name)}» داشته باشی؟ <b>کلیک کن</b></span>
+  </a>`;
+}
+
+function renderJoin(from) {
+  renderTopbar('join');
+  const features = [
+    ['calendar', 'زمان‌های خالی، آنلاین', 'مشتری قبل از تماس می‌بیند کِی وقت دارید؛ بدون تماس‌های بی‌نتیجه.'],
+    ['clock', 'ثبت نوبت با یک کلیک', 'خدمات و مدت هرکدام را یک بار تعریف کنید؛ پایان نوبت خودکار حساب می‌شود.'],
+    ['users', 'برای یک یا چند آرایشگر', 'هر آرایشگر حساب و برنامهٔ خودش را دارد و شما همه را مدیریت می‌کنید.'],
+    ['store', 'صفحهٔ اختصاصی آرایشگاه', 'با لوکیشن، اینستاگرام، تلگرام و حتی دامنهٔ اختصاصی خودتان.'],
+  ];
+  $('#app').innerHTML = `
+    <div class="page join">
+      <section class="join-hero">
+        <span class="join-badge">${icon('check')}یک ماه اول رایگان</span>
+        <h1>سایت نوبت‌دهی اختصاصی برای آرایشگاه شما</h1>
+        <p>دفترچهٔ نوبت را کنار بگذارید. مشتری‌ها زمان‌های خالی را آنلاین می‌بینند و شما نوبت‌ها را از گوشی مدیریت می‌کنید.</p>
+      </section>
+      <div class="join-grid">
+        <div class="join-features">
+          ${features.map(([ic, t, d]) => `<div class="feature"><span class="feature-icon">${icon(ic)}</span><div><b>${t}</b><p>${d}</p></div></div>`).join('')}
+        </div>
+        <div class="card" id="joinBox">
+          <h2 style="margin:0 0 4px;font-size:18px">درخواست ساخت سایت</h2>
+          <p class="muted" style="margin:0 0 16px;font-size:13.5px">اطلاعاتتان را بگذارید، برای هماهنگی با شما تماس می‌گیریم.</p>
+          <form id="joinForm" autocomplete="on">
+            <div class="field">
+              <label for="jName">نام و نام خانوادگی</label>
+              <input class="input" id="jName" name="name" maxlength="60" required autocomplete="name">
+            </div>
+            <div class="field">
+              <label for="jPhone">شماره تماس</label>
+              <input class="input ltr-input" id="jPhone" name="phone" type="tel" inputmode="tel" maxlength="16" required autocomplete="tel" placeholder="۰۹۱۲۰۰۰۰۰۰۰">
+            </div>
+            <div class="field">
+              <label for="jNote">توضیحات <span class="muted" style="font-weight:400">(اختیاری)</span></label>
+              <textarea class="input" id="jNote" name="note" rows="3" maxlength="600" placeholder="نام آرایشگاه، شهر، تعداد آرایشگرها یا هر سؤالی که دارید"></textarea>
+            </div>
+            <input type="text" name="website" id="jWebsite" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
+            <button class="btn btn-primary btn-lg btn-block" id="joinSave">${icon('check')}ارسال درخواست</button>
+          </form>
+        </div>
+      </div>
+    </div>`;
+
+  $('#joinForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const btn = $('#joinSave');
+    btn.disabled = true;
+    try {
+      const res = await api('POST', '/leads', {
+        name: $('#jName').value.trim(), phone: toEn($('#jPhone').value), note: $('#jNote').value.trim(),
+        website: $('#jWebsite').value, source: from || '',
+      });
+      $('#joinBox').innerHTML = `
+        <div class="empty" style="padding:20px 8px 8px">
+          <div class="big-icon" style="background:var(--free-soft);color:var(--free)">${icon('check')}</div>
+          <h3>درخواست شما ثبت شد</h3>
+          <p>به‌زودی برای هماهنگی با شما تماس می‌گیریم. اگر عجله دارید، مستقیم پیام بدهید:</p>
+        </div>
+        ${supportHTML(res.support)}`;
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, true);
+    }
+  });
+}
+
+// لیست درخواست‌ها در پنل مدیر سایت
+const LEAD_STATUS = [['new', 'جدید'], ['contacted', 'تماس گرفته شد'], ['done', 'آرایشگاه ساخته شد'], ['rejected', 'منصرف شد']];
+function leadsHTML() {
+  const leads = state.leads || [];
+  if (!leads.length) {
+    return `<div class="card" style="margin-top:20px">${emptyHTML('users', 'هنوز درخواستی نیامده', 'درخواست‌ها از لینک پایین صفحهٔ آرایشگاه‌ها یا صفحهٔ #/join ثبت می‌شوند.')}</div>`;
+  }
+  return `<div class="leads">${leads.map((l) => {
+    const d = new Date(l.createdAt);
+    const when = `${shortDate(isoOf(d))} · ${faTime(d.getHours() * 60 + d.getMinutes())}`;
+    return `<div class="card lead lead-${l.status}">
+      <div class="lead-head">
+        <div><b>${esc(l.name)}</b> <span class="badge lead-badge">${LEAD_STATUS.find(([k]) => k === l.status)?.[1] || ''}</span></div>
+        <span class="muted" style="font-size:12.5px">${when}</span>
+      </div>
+      <div class="support" style="margin:8px 0">
+        <a class="btn" href="tel:${esc(l.phone)}">${icon('phone')}<span class="ltr">${fa(esc(l.phone))}</span></a>
+        <a class="btn" href="sms:${esc(l.phone)}">${icon('chat')}پیامک</a>
+      </div>
+      ${l.note ? `<p class="lead-note">${esc(l.note)}</p>` : ''}
+      ${l.sourceName ? `<div class="muted" style="font-size:12.5px;margin-bottom:8px">از صفحهٔ «${esc(l.sourceName)}»</div>` : ''}
+      <div class="lead-foot">
+        <div class="pick-chips">${LEAD_STATUS.map(([k, t]) => `<button class="pick mini ${l.status === k ? 'active' : ''}" data-action="lead-status" data-id="${esc(l.id)}" data-status="${k}">${t}</button>`).join('')}</div>
+        <button class="btn icon-btn sm btn-danger" data-action="del-lead" data-id="${esc(l.id)}" title="حذف">${icon('trash')}</button>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
 }
 
 /* ================================================================ login */
@@ -1514,6 +1627,28 @@ document.addEventListener('click', async (ev) => {
       return openShopModal(null);
     case 'edit-shop':
       return openShopModal(state.shops.find((x) => x.id === el.dataset.id));
+    case 'home-tab':
+      state.homeTab = el.dataset.tab;
+      return render(false);
+    case 'lead-status': {
+      try {
+        await api('PUT', `/admin/leads/${encodeURIComponent(el.dataset.id)}`, { status: el.dataset.status });
+        const l = state.leads.find((x) => x.id === el.dataset.id);
+        if (l) l.status = el.dataset.status;
+        renderHome();
+      } catch (err) { toast(err.message, true); }
+      return;
+    }
+    case 'del-lead': {
+      const l = state.leads.find((x) => x.id === el.dataset.id);
+      if (!l || !(await confirmDialog('حذف درخواست', `درخواست «${esc(l.name)}» حذف شود؟`))) return;
+      try {
+        await api('DELETE', `/admin/leads/${encodeURIComponent(l.id)}`);
+        state.leads = state.leads.filter((x) => x.id !== l.id);
+        toast('درخواست حذف شد'); renderHome();
+      } catch (err) { toast(err.message, true); }
+      return;
+    }
     case 'sub-shop':
       return openSubModal(state.shops.find((x) => x.id === el.dataset.id));
     case 'toggle-shop': {
@@ -1656,7 +1791,7 @@ document.addEventListener('keydown', (ev) => {
 // نگه داشتن آیکون قیچی به مدت ۲ ثانیه: در صفحهٔ آرایشگاه پنل همان آرایشگاه، در صفحهٔ اصلی ورود مدیر سایت
 function goAdmin() {
   if (modalOpen()) return;
-  const home = route().view === 'home';
+  const home = route().view === 'home' || route().view === 'join';
   const next = home ? '#/' : `#/s/${encodeURIComponent(state.shopId)}/admin`;
   const allowed = home ? isSuper() : canEnterShop(state.shopId);
   if (!allowed) return openLogin(next);
@@ -1698,6 +1833,7 @@ const domainShop = DOMAIN_SHOPS[location.hostname.replace(/^www\./, '')] || null
 function route() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   if (parts[0] === 's' && parts[1]) return { view: parts[2] === 'admin' ? 'admin' : 'user', shopId: decodeURIComponent(parts[1]) };
+  if (parts[0] === 'join') return { view: 'join', from: parts[1] ? decodeURIComponent(parts[1]) : null };
   // moghadamsbz.ir/admin → پنل همان آرایشگاه · آدرس اصلی/admin → ورود مدیر سایت
   const adminPath = /^\/admin\/?$/.test(location.pathname);
   if (domainShop) return { view: adminPath ? 'admin' : 'user', shopId: domainShop };
@@ -1707,8 +1843,10 @@ function route() {
 async function render(reload = true) {
   const r = route();
   try {
+    if (r.view === 'join') { renderJoin(r.from); return; }
     if (r.view === 'home') {
       if (reload || !state.shops) await loadShops();
+      if (isSuper() && (reload || !state.leads)) state.leads = (await api('GET', '/admin/leads')).leads;
       renderHome();
       if (r.adminEntry && !isSuper() && !state.adminEntryShown) { state.adminEntryShown = true; openLogin('#/'); }
       return;
@@ -1740,7 +1878,9 @@ window.addEventListener('hashchange', () => {
 });
 
 // به‌روزرسانی خودکار هر ۳ دقیقه (وقتی پنجره‌ای باز نیست)
-setInterval(() => { if (!modalOpen() && document.visibilityState === 'visible') render(); }, 3 * 60000);
+setInterval(() => {
+  if (!modalOpen() && document.visibilityState === 'visible' && route().view !== 'join') render();
+}, 3 * 60000);
 
 $('.brand-icon').innerHTML = icon('scissors');
 render();
