@@ -535,6 +535,12 @@ textarea.input { resize: vertical; line-height: 1.8; }
 .lead-receipt { margin: 0 0 8px; }
 .lead-paid { border-color: color-mix(in srgb, var(--free) 50%, var(--border)); }
 .lead-paid .lead-badge { background: var(--free-soft); color: var(--free); }
+.renew-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.renew-new { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.renew-new .lead-badge { background: var(--accent-soft); color: var(--accent); }
+.renew-done .lead-badge { background: var(--free-soft); color: var(--free); }
+.renew-rejected { opacity: .65; }
+.sub-banner .btn { margin-top: 2px; }
 .hp { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); opacity: 0; pointer-events: none; }
 #joinForm { position: relative; }
 .seg .count { background: var(--busy); color: #fff; border-radius: 999px; padding: 0 7px; font-size: 11.5px; line-height: 1.6; }
@@ -711,6 +717,9 @@ textarea.input { resize: vertical; line-height: 1.8; }
 }
 @media (max-width: 600px) {
   .who { display: none; }
+  /* تب‌ها در موبایل تمام عرض و هم‌اندازه تا هیچ‌کدام بیرون نزند */
+  .seg { display: flex; width: 100%; }
+  .seg button { flex: 1; justify-content: center; padding: 8px 6px; gap: 5px; font-size: 13.5px; }
   .cred-row { flex-direction: column; gap: 0; }
   .cred-row .field { width: 100%; }
   .shop-list { grid-template-columns: 1fr; }

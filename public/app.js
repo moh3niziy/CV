@@ -161,8 +161,10 @@ async function loadShops() {
 }
 
 async function loadAdmin() {
-  const { shop, data, version, role, barberId, accounts, support } = await api('GET', `${shopPath()}/data`);
+  const { shop, data, version, role, barberId, accounts, support, payment, renewal } = await api('GET', `${shopPath()}/data`);
   state.support = support || null;
+  state.payment = payment || null;
+  state.renewal = renewal || null;
   state.shop = shop;
   state.role = role;
   state.accounts = accounts || null;
@@ -535,21 +537,29 @@ function renderHome() {
       <div class="card hidden" id="shopNone">${emptyHTML('search', 'آرایشگاهی پیدا نشد', 'عبارت دیگری را جستجو کنید.')}</div>`;
   }
 
-  const leadsTab = isSuper() && state.homeTab === 'leads';
-  const newLeads = (state.leads || []).filter((l) => l.status === 'new').length;
+  const tab = isSuper() ? state.homeTab || 'shops' : 'shops';
+  const leadsTab = tab === 'leads';
+  const newLeads = (state.leads || []).filter((l) => l.status === 'new' || l.status === 'paid').length;
+  const newRenewals = (state.renewals || []).filter((r) => r.status === 'new').length;
+  const heads = {
+    shops: ['آرایشگاه موردنظر را انتخاب کنید', 'زمان‌های خالی هر آرایشگاه را ببینید و برای رزرو تماس بگیرید.'],
+    leads: ['درخواست‌های ساخت سایت', 'افرادی که از صفحهٔ «تو هم می‌خواهی؟» درخواست داده‌اند.'],
+    renewals: ['رسیدهای تمدید', 'رسیدهایی که مالک آرایشگاه‌ها برای تمدید اشتراک فرستاده‌اند.'],
+  };
   $('#app').innerHTML = `
     <div class="page">
       <div class="admin-head">
         <section class="hero" style="padding:0">
-          <h1>${leadsTab ? 'درخواست‌های ساخت سایت' : 'آرایشگاه موردنظر را انتخاب کنید'}</h1>
-          <p>${leadsTab ? 'افرادی که از صفحهٔ «تو هم می‌خواهی؟» درخواست داده‌اند.' : 'زمان‌های خالی هر آرایشگاه را ببینید و برای رزرو تماس بگیرید.'}</p>
+          <h1>${heads[tab][0]}</h1>
+          <p>${heads[tab][1]}</p>
         </section>
         ${isSuper() ? `<div class="seg" role="tablist">
-          <button class="${leadsTab ? '' : 'active'}" data-action="home-tab" data-tab="shops">${icon('store')}آرایشگاه‌ها</button>
+          <button class="${tab === 'shops' ? 'active' : ''}" data-action="home-tab" data-tab="shops">${icon('store')}آرایشگاه‌ها</button>
           <button class="${leadsTab ? 'active' : ''}" data-action="home-tab" data-tab="leads">${icon('users')}درخواست‌ها${newLeads ? ` <span class="count">${fa(newLeads)}</span>` : ''}</button>
+          <button class="${tab === 'renewals' ? 'active' : ''}" data-action="home-tab" data-tab="renewals">${icon('calendar')}تمدیدها${newRenewals ? ` <span class="count">${fa(newRenewals)}</span>` : ''}</button>
         </div>` : ''}
       </div>
-      ${leadsTab ? leadsHTML() : `${shops.length && addBtn ? `<div style="margin-top:16px">${addBtn}</div>` : ''}<div style="margin-top:20px">${body}</div>`}
+      ${leadsTab ? leadsHTML() : tab === 'renewals' ? renewalsHTML() : `${shops.length && addBtn ? `<div style="margin-top:16px">${addBtn}</div>` : ''}<div style="margin-top:20px">${body}</div>`}
     </div>`;
 
   const search = $('#shopSearch');
@@ -1057,6 +1067,33 @@ async function copyText(text) {
   return ok;
 }
 
+// رسیدهای تمدید در پنل مدیر سایت
+const RENEW_STATUS = { new: 'در انتظار بررسی', done: 'تأیید و تمدید شد', rejected: 'رد شد' };
+function renewalsHTML() {
+  const list = state.renewals || [];
+  if (!list.length) {
+    return `<div class="card" style="margin-top:20px">${emptyHTML('calendar', 'هنوز رسید تمدیدی نیامده', 'وقتی مالک آرایشگاهی از پنل خودش رسید تمدید بفرستد، اینجا نمایش داده می‌شود.')}</div>`;
+  }
+  return `<div class="leads">${list.map((r) => {
+    const d = new Date(r.createdAt);
+    const p = planOf(r.plan);
+    return `<div class="card lead renew-${r.status}">
+      <div class="lead-head">
+        <div><b>${esc(r.shopName || 'آرایشگاه حذف‌شده')}</b> <span class="badge lead-badge">${RENEW_STATUS[r.status] || ''}</span></div>
+        <span class="muted" style="font-size:12.5px">${shortDate(isoOf(d))}، ساعت ${faTime(d.getHours() * 60 + d.getMinutes())}</span>
+      </div>
+      ${p ? `<div class="lead-plan">${icon('calendar')}<span>پلن ${p.title}، ${toman(p.price)} تومان</span></div>` : ''}
+      ${r.sub ? `<div class="lead-plan">${icon('clock')}<span>اشتراک فعلی:</span> ${subBadgeHTML(r.sub)}</div>` : ''}
+      <div class="renew-actions">
+        <button class="btn" data-action="view-receipt" data-id="${esc(r.id)}">${icon('eye')}مشاهدهٔ رسید</button>
+        ${r.status === 'new' && r.shopName ? `
+          <button class="btn btn-primary" data-action="renew-approve" data-id="${esc(r.id)}">${icon('check')}تأیید و تمدید</button>
+          <button class="btn btn-danger" data-action="renew-reject" data-id="${esc(r.id)}">${icon('x')}رد</button>` : ''}
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
 // لیست درخواست‌ها در پنل مدیر سایت
 const LEAD_STATUS = [['new', 'جدید'], ['contacted', 'تماس گرفته شد'], ['paid', 'رسید رسیده'], ['done', 'آرایشگاه ساخته شد'], ['rejected', 'منصرف شد']];
 function leadsHTML() {
@@ -1149,18 +1186,85 @@ function supportHTML(support) {
 
 function subBannerHTML() {
   const sub = state.shop?.sub;
-  if (!sub) return '';
+  if (!sub || (sub.state !== 'warning' && sub.state !== 'grace')) return '';
+  const owner = state.role === 'owner';
+  const pending = state.renewal && planOf(state.renewal.plan);
+  // مالک: پیشنهاد تمدید با پرداخت کارت‌به‌کارت · آرایشگر: فقط اطلاع‌رسانی
+  const action = !owner ? `<p>برای تمدید، مالک آرایشگاه از پنل خودش اقدام کند یا با پشتیبانی تماس بگیرید:</p>${supportHTML(state.support)}`
+    : pending ? `<p>رسید تمدید شما (پلن ${pending.title}) ارسال شده و در انتظار تأیید است. پس از تأیید، اشتراک خودکار تمدید می‌شود.</p>
+      <button class="btn" data-action="renew">${icon('plus')}ارسال رسید دیگر</button>`
+    : `<p>${sub.state === 'grace' ? 'برای فعال شدن دوباره' : 'برای اینکه نوبت‌دهی قطع نشود'}، همین حالا اشتراک را تمدید کنید.</p>
+      <button class="btn btn-primary" data-action="renew">${icon('calendar')}تمدید اشتراک</button>`;
   if (sub.state === 'warning') {
     const when = sub.daysLeft === 0 ? 'امروز آخرین روز اشتراک این آرایشگاه است' : `اشتراک این آرایشگاه ${fa(sub.daysLeft)} روز دیگر (${shortDate(sub.expiresAt)}) تمام می‌شود`;
-    return `<div class="sub-banner warn">${icon('alert')}<div><b>${when}.</b>
-      <p>برای تمدید اشتراک با پشتیبانی تماس بگیرید:</p>${supportHTML(state.support)}</div></div>`;
+    return `<div class="sub-banner warn">${icon('alert')}<div><b>${when}.</b>${action}</div></div>`;
   }
-  if (sub.state === 'grace') {
-    return `<div class="sub-banner busy">${icon('lock')}<div><b>اشتراک این آرایشگاه تمام شده است.</b>
-      <p>پنل ${sub.graceLeft ? `تا ${fa(sub.graceLeft)} روز دیگر` : 'تا پایان امروز'} فقط قابل مشاهده است و پس از آن آرایشگاه غیرفعال می‌شود و برای مشتری‌ها هم نمایش داده نمی‌شود. برای تمدید تماس بگیرید:</p>
-      ${supportHTML(state.support)}</div></div>`;
-  }
-  return '';
+  return `<div class="sub-banner busy">${icon('lock')}<div><b>اشتراک این آرایشگاه تمام شده است.</b>
+    <p>پنل ${sub.graceLeft ? `تا ${fa(sub.graceLeft)} روز دیگر` : 'تا پایان امروز'} فقط قابل مشاهده است و پس از آن آرایشگاه غیرفعال می‌شود و برای مشتری‌ها هم نمایش داده نمی‌شود.</p>
+    ${action}</div></div>`;
+}
+
+// پنجرهٔ تمدید: انتخاب پلن، شماره کارت و ارسال تصویر رسید (همان روند صفحهٔ سفارش)
+function openRenewModal() {
+  const payment = state.payment || {};
+  let plan = planOf(state.renewal?.plan) || planOf(6);
+  let image = null;
+  openModal(`
+    <div class="modal sm" role="dialog" aria-modal="true">
+      <div class="modal-head"><h2>تمدید اشتراک</h2><button class="btn btn-ghost icon-btn sm" data-action="close" aria-label="بستن">${icon('x')}</button></div>
+      <div class="modal-body" id="renewBody"></div>
+      <div class="modal-foot">
+        <button class="btn btn-primary btn-lg" id="renewSend" disabled>${icon('check')}ارسال رسید</button>
+        <button class="btn btn-lg" data-action="close">انصراف</button>
+      </div>
+    </div>`);
+  const body = $('#renewBody');
+  const draw = () => {
+    const card = payment.card || '';
+    body.innerHTML = `
+      <div class="field">
+        <span class="label">پلن تمدید</span>
+        <div class="plan-chips">${PLANS.map((p) => `<button type="button" class="pick ${p.months === plan.months ? 'active' : ''}" data-renew-plan="${p.months}">${p.title} <small>${toman(p.price)}</small></button>`).join('')}</div>
+      </div>
+      <div class="pay-card">
+        <div class="pay-amount"><span>مبلغ قابل پرداخت</span><b>${toman(plan.price)} تومان</b></div>
+        <div class="pay-label">شماره کارت</div>
+        <div class="pay-number ltr">${fa(card.replace(/(\d{4})(?=\d)/g, '$1 '))}</div>
+        <div class="pay-holder">به نام <b>${esc(payment.holder || '')}</b></div>
+        <button type="button" class="btn btn-block" data-action="copy-card" data-card="${esc(card)}">${icon('check')}کپی شماره کارت</button>
+      </div>
+      <div class="pay-note">${icon('clock')}<span>بعد از واریز، تصویر رسید را انتخاب و ارسال کنید. می‌توانید این پنجره را ببندید و بعداً از همین بنر ادامه دهید.</span></div>
+      ${image ? `<img class="receipt-img" src="${image}" alt="رسید پرداخت">
+        <label class="btn btn-block" style="margin-top:10px">${icon('edit')}انتخاب تصویر دیگر<input type="file" accept="image/*" id="renewFile" hidden></label>`
+      : `<label class="btn btn-block btn-lg">${icon('plus')}انتخاب تصویر رسید<input type="file" accept="image/*" id="renewFile" hidden></label>`}`;
+    $('#renewSend').disabled = !image;
+    $('#renewFile').addEventListener('change', async (ev) => {
+      const file = ev.target.files[0];
+      if (!file) return;
+      try { image = await compressImage(file); draw(); } catch (err) { toast(err.message, true); }
+    });
+  };
+  body.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-renew-plan]');
+    if (!b) return;
+    plan = planOf(b.dataset.renewPlan);
+    draw();
+  });
+  $('#renewSend').addEventListener('click', async () => {
+    const btn = $('#renewSend');
+    btn.disabled = true;
+    try {
+      const res = await api('POST', `${shopPath()}/renewal`, { plan: plan.months, image });
+      state.renewal = res.renewal;
+      closeModal();
+      toast('رسید تمدید ارسال شد');
+      renderAdmin();
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, true);
+    }
+  });
+  draw();
 }
 
 // صفحهٔ آرایشگاه منقضی: یک پیام در وسط صفحه
@@ -1817,17 +1921,17 @@ function openBarberModal(barber) {
 }
 
 /* ================================================================ confirm + modal plumbing */
-function confirmDialog(title, text, okLabel = 'حذف') {
+function confirmDialog(title, text, okLabel = 'حذف', { ic = 'trash', ok = false } = {}) {
   return new Promise((resolve) => {
     openModal(`
       <div class="modal sm" role="dialog" aria-modal="true">
         <div class="modal-body" style="text-align:center;padding-top:24px">
-          <div class="login-icon" style="background:var(--busy-soft);color:var(--busy)">${icon('trash')}</div>
+          <div class="login-icon" style="background:var(--${ok ? 'free' : 'busy'}-soft);color:var(--${ok ? 'free' : 'busy'})">${icon(ic)}</div>
           <h2 style="margin:0 0 6px;font-size:18px">${title}</h2>
           <p class="muted" style="margin:0">${text}</p>
         </div>
         <div class="modal-foot" style="border:0">
-          <button class="btn btn-lg btn-danger" style="flex:1" id="cfOk">${okLabel}</button>
+          <button class="btn btn-lg ${ok ? 'btn-primary' : 'btn-danger'}" style="flex:1" id="cfOk">${okLabel}</button>
           <button class="btn btn-lg" style="flex:1" id="cfNo">انصراف</button>
         </div>
       </div>`, () => resolve(false));
@@ -1928,6 +2032,25 @@ document.addEventListener('click', async (ev) => {
             <div class="modal-head"><h2>رسید پرداخت</h2><button class="btn btn-ghost icon-btn sm" data-action="close" aria-label="بستن">${icon('x')}</button></div>
             <div class="modal-body"><img class="receipt-img" src="${image}" alt="رسید پرداخت"></div>
           </div>`);
+      } catch (err) { toast(err.message, true); }
+      return;
+    }
+    case 'renew':
+      return openRenewModal();
+    case 'renew-approve':
+    case 'renew-reject': {
+      const r = (state.renewals || []).find((x) => x.id === el.dataset.id);
+      if (!r) return;
+      const p = planOf(r.plan);
+      const approve = action === 'renew-approve';
+      const ok = approve
+        ? await confirmDialog('تأیید و تمدید', `پرداخت را در حساب بانکی بررسی کرده‌اید؟ اشتراک «${esc(r.shopName)}» به مدت ${p ? p.title : ''} (${fa(r.plan * 30)} روز) تمدید می‌شود.`, 'تأیید و تمدید', { ic: 'check', ok: true })
+        : await confirmDialog('رد رسید', `رسید تمدید «${esc(r.shopName)}» رد شود؟ اشتراک تغییری نمی‌کند.`, 'رد رسید', { ic: 'x' });
+      if (!ok) return;
+      try {
+        const res = await api('PUT', `/admin/renewals/${encodeURIComponent(r.id)}`, { action: approve ? 'approve' : 'reject' });
+        toast(approve ? `اشتراک تا ${shortDate(res.sub.expiresAt)} تمدید شد` : 'رسید رد شد');
+        render();
       } catch (err) { toast(err.message, true); }
       return;
     }
@@ -2141,6 +2264,7 @@ async function render(reload = true) {
     if (r.view === 'home') {
       if (reload || !state.shops) await loadShops();
       if (isSuper() && (reload || !state.leads)) state.leads = (await api('GET', '/admin/leads')).leads;
+      if (isSuper() && (reload || !state.renewals)) state.renewals = (await api('GET', '/admin/renewals')).renewals;
       renderHome();
       if (r.adminEntry && !isSuper() && !state.adminEntryShown) { state.adminEntryShown = true; openLogin('#/'); }
       return;

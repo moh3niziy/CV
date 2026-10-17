@@ -107,7 +107,8 @@ async function migrate(db) {
   for (const [table, col] of [['shops', 'active INTEGER NOT NULL DEFAULT 1'], ['shops', "telegram TEXT NOT NULL DEFAULT ''"],
     ['shops', "instagram TEXT NOT NULL DEFAULT ''"], ['shops', "expires_at TEXT NOT NULL DEFAULT ''"],
     ['leads', "shop_name TEXT NOT NULL DEFAULT ''"], ['leads', "city TEXT NOT NULL DEFAULT ''"],
-    ['leads', 'plan INTEGER NOT NULL DEFAULT 0'], ['leads', "token TEXT NOT NULL DEFAULT ''"]]) {
+    ['leads', 'plan INTEGER NOT NULL DEFAULT 0'], ['leads', "token TEXT NOT NULL DEFAULT ''"],
+    ['receipts', "status TEXT NOT NULL DEFAULT 'new'"]]) {
     try {
       await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col}`).run();
     } catch (err) {
@@ -279,6 +280,12 @@ function cleanReceipt(v) {
   if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image)) throw new HttpError(400, 'تصویر رسید معتبر نیست');
   if (image.length > MAX_RECEIPT) throw new HttpError(413, 'حجم تصویر رسید زیاد است');
   return image;
+}
+
+// آخرین رسید تمدیدی که هنوز بررسی نشده (برای نمایش «در انتظار تأیید» در پنل مالک)
+async function pendingRenewal(db, shopId) {
+  return (await db.prepare(`SELECT plan, created_at AS createdAt FROM receipts
+    WHERE shop_id = ? AND status = 'new' ORDER BY created_at DESC LIMIT 1`).bind(shopId).first()) || null;
 }
 
 // وضعیت سفارش برای خود کاربر (بدون اطلاعات داخلی مثل IP)
@@ -476,6 +483,42 @@ async function handleApi(request, env, path) {
     throw new HttpError(404, 'مسیر پیدا نشد');
   }
 
+  // ---- رسیدهای تمدید آرایشگاه‌ها (فقط مدیر سایت)
+  if (parts[0] === 'admin' && parts[1] === 'renewals') {
+    requireAuth(auth);
+    if (auth.r !== 'super') throw new HttpError(403, 'به این بخش دسترسی ندارید');
+    const rid = parts[2];
+    if (method === 'GET' && !rid) {
+      const { results } = await db.prepare(`SELECT r.id, r.shop_id AS shopId, r.plan, r.status, r.created_at AS createdAt,
+        s.name AS shopName, s.expires_at AS expiresAt FROM receipts r LEFT JOIN shops s ON s.id = r.shop_id
+        WHERE r.shop_id IS NOT NULL ORDER BY r.created_at DESC LIMIT 300`).all();
+      return json({ renewals: results.map(({ expiresAt, ...r }) => ({ ...r, sub: expiresAt != null ? subStatus(expiresAt) : null })) });
+    }
+    // تأیید: اشتراک به اندازهٔ پلن (هر ماه ۳۰ روز) از پایان فعلی یا از امروز تمدید می‌شود · رد: فقط وضعیت رسید
+    if (method === 'PUT' && rid && parts.length === 3) {
+      const { action } = await readJson(request);
+      const r = await db.prepare('SELECT id, shop_id, plan, status FROM receipts WHERE id = ? AND shop_id IS NOT NULL').bind(rid).first();
+      if (!r) throw new HttpError(404, 'رسید پیدا نشد');
+      if (r.status !== 'new') throw new HttpError(409, 'این رسید قبلاً بررسی شده است');
+      if (action === 'reject') {
+        await db.prepare("UPDATE receipts SET status = 'rejected' WHERE id = ?").bind(rid).run();
+        return json({ id: rid, status: 'rejected' });
+      }
+      if (action !== 'approve') throw new HttpError(400, 'درخواست نامعتبر است');
+      const shop = await db.prepare('SELECT expires_at FROM shops WHERE id = ?').bind(r.shop_id).first();
+      if (!shop) throw new HttpError(404, 'آرایشگاه پیدا نشد');
+      const today = localNow().date;
+      const base = shop.expires_at && shop.expires_at >= today ? shop.expires_at : today;
+      const expiresAt = addDaysISO(base, r.plan * 30);
+      await db.batch([
+        db.prepare('UPDATE shops SET expires_at = ? WHERE id = ?').bind(expiresAt, r.shop_id),
+        db.prepare("UPDATE receipts SET status = 'done' WHERE id = ?").bind(rid),
+      ]);
+      return json({ id: rid, status: 'done', sub: subStatus(expiresAt) });
+    }
+    throw new HttpError(404, 'مسیر پیدا نشد');
+  }
+
   // ---- تصویر یک رسید (فقط مدیر سایت)
   if (parts[0] === 'admin' && parts[1] === 'receipts' && parts[2] && parts.length === 3 && method === 'GET') {
     requireAuth(auth);
@@ -556,7 +599,10 @@ async function handleApi(request, env, path) {
       if (auth.r !== 'super') throw new HttpError(403, 'فقط مدیر سایت می‌تواند آرایشگاه را حذف کند');
       const res = await db.prepare('DELETE FROM shops WHERE id = ?').bind(id).run();
       if (!res.meta.changes) throw new HttpError(404, 'آرایشگاه پیدا نشد');
-      await db.prepare('DELETE FROM accounts WHERE shop_id = ?').bind(id).run();
+      await db.batch([
+        db.prepare('DELETE FROM accounts WHERE shop_id = ?').bind(id),
+        db.prepare('DELETE FROM receipts WHERE shop_id = ?').bind(id),
+      ]);
       return json({ id });
     }
   }
@@ -574,7 +620,10 @@ async function handleApi(request, env, path) {
         };
         return json({ ...cur, role: 'barber', barberId: auth.b, support: SUPPORT });
       }
-      return json({ ...cur, role: auth.r, accounts: await shopAccounts(db, id), support: SUPPORT });
+      return json({
+        ...cur, role: auth.r, accounts: await shopAccounts(db, id), support: SUPPORT, payment: PAYMENT,
+        renewal: await pendingRenewal(db, id),
+      });
     }
 
     if (method === 'PUT') {
@@ -640,6 +689,21 @@ async function handleApi(request, env, path) {
     const res = await db.prepare('UPDATE shops SET expires_at = ? WHERE id = ?').bind(expiresAt, id).run();
     if (!res.meta.changes) throw new HttpError(404, 'آرایشگاه پیدا نشد');
     return json({ id, sub: subStatus(expiresAt) });
+  }
+
+  // ارسال رسید تمدید اشتراک توسط مالک؛ در مهلت «فقط مشاهده» هم مجاز است
+  if (id && parts[3] === 'renewal' && parts.length === 4 && method === 'POST') {
+    requireShop(auth, id, ['owner']);
+    if (auth.r !== 'owner') throw new HttpError(403, 'فقط مالک آرایشگاه می‌تواند رسید تمدید بفرستد');
+    const body = await readJson(request);
+    const plan = Number(body.plan);
+    if (!PLAN_MONTHS.includes(plan)) throw new HttpError(400, 'یک پلن انتخاب کنید');
+    const image = cleanReceipt(body.image);
+    const pending = await db.prepare("SELECT COUNT(*) AS n FROM receipts WHERE shop_id = ? AND status = 'new'").bind(id).first();
+    if (pending.n >= MAX_RECEIPTS_PER_LEAD) throw new HttpError(429, 'تعداد رسیدهای ارسالی زیاد است؛ با پشتیبانی تماس بگیرید');
+    await db.prepare("INSERT INTO receipts (id, lead_id, shop_id, plan, image, status, created_at) VALUES (?, NULL, ?, ?, ?, 'new', ?)")
+      .bind(newId(), id, plan, image, Date.now()).run();
+    return json({ renewal: await pendingRenewal(db, id) });
   }
 
   // نام کاربری و رمز آرایشگر (مالک یا مدیر سایت)
