@@ -124,8 +124,8 @@ const canEnterShop = (id) => isSuper() || (!!state.auth && state.auth.shopId ===
 // داده‌ها در دیتابیس Cloudflare D1 ذخیره می‌شوند و از طریق API همین سایت (worker.js) خوانده و نوشته می‌شوند.
 function setAuth(a) { state.auth = a; store.set('hd_auth', a ? JSON.stringify(a) : null); store.set('hd_pass', null); }
 
-async function api(method, path, body) {
-  const headers = { 'Content-Type': 'application/json' };
+async function api(method, path, body, extraHeaders) {
+  const headers = { 'Content-Type': 'application/json', ...(extraHeaders || {}) };
   if (state.auth?.token) headers.Authorization = 'Bearer ' + state.auth.token;
   let res;
   try {
@@ -718,6 +718,15 @@ function renderUser() {
 }
 
 /* ================================================================ promo + join page */
+// تعرفه‌ها (تومان). صرفه‌جویی نسبت به پرداخت ماهانه حساب می‌شود
+const MONTHLY = 1000000;
+const PLANS = [
+  { months: 1, price: 1000000, title: 'ماهانه' },
+  { months: 3, price: 2000000, title: 'سه‌ماهه' },
+  { months: 6, price: 3000000, title: 'شش‌ماهه', best: true },
+];
+const planOf = (months) => PLANS.find((p) => p.months === Number(months)) || null;
+const toman = (n) => n >= 1e6 && n % 1e6 === 0 ? `${fa(n / 1e6)} میلیون` : `${fa(Math.round(n / 1e3).toLocaleString('en'))} هزار`;
 // لینک تبلیغاتی پایین صفحهٔ مشتری همهٔ آرایشگاه‌ها
 function promoHTML() {
   if (!state.shop) return '';
@@ -747,14 +756,6 @@ function renderJoin(from) {
     ['دامنهٔ اختصاصی هزینهٔ جدا دارد؟', 'نه. هزینهٔ خرید دامنهٔ اختصاصی با ماست.'],
     ['اگر اشتراک تمام شود چه می‌شود؟', `بعد از پایان اشتراک، ${fa(7)} روز مهلت دارید تا آن را تمدید کنید.`],
   ];
-  // تعرفه‌ها (تومان). صرفه‌جویی نسبت به پرداخت ماهانه حساب می‌شود
-  const MONTHLY = 1000000;
-  const plans = [
-    { months: 1, price: 1000000, title: 'ماهانه' },
-    { months: 3, price: 2000000, title: 'سه‌ماهه' },
-    { months: 6, price: 3000000, title: 'شش‌ماهه', best: true },
-  ];
-  const toman = (n) => n >= 1e6 && n % 1e6 === 0 ? `${fa(n / 1e6)} میلیون` : `${fa(Math.round(n / 1e3).toLocaleString('en'))} هزار`;
   const planHTML = (p) => {
     const save = MONTHLY * p.months - p.price;
     return `<div class="plan ${p.best ? 'best' : ''}">
@@ -763,6 +764,7 @@ function renderJoin(from) {
       <div class="plan-price"><b>${toman(p.price)}</b> تومان</div>
       <div class="plan-per">${p.months > 1 ? `ماهی ${toman(p.price / p.months)} تومان` : 'پرداخت ماه‌به‌ماه'}</div>
       ${save > 0 ? `<div class="plan-save">${fa(Math.round(save / (MONTHLY * p.months) * 100))}٪ تخفیف، ${toman(save)} تومان صرفه‌جویی</div>` : '<div class="plan-save muted-save">بدون تعهد بلندمدت</div>'}
+      <button class="btn ${p.best ? 'btn-primary' : ''} plan-pick" data-action="join-plan" data-plan="${p.months}">انتخاب این پلن</button>
     </div>`;
   };
 
@@ -791,7 +793,7 @@ function renderJoin(from) {
 
       <section class="pricing">
         <h2>تعرفه‌ها</h2>
-        <div class="plans">${plans.map(planHTML).join('')}</div>
+        <div class="plans">${PLANS.map(planHTML).join('')}</div>
       </section>
 
       <section class="faq">
@@ -799,34 +801,7 @@ function renderJoin(from) {
         ${faqs.map(([q, a]) => `<details><summary>${q}</summary><p>${a}</p></details>`).join('')}
       </section>
 
-      <div class="card join-box" id="joinBox">
-          <h2 style="margin:0 0 4px;font-size:18px">درخواست ساخت سایت</h2>
-          <p class="muted" style="margin:0 0 16px;font-size:13.5px">اطلاعاتتان را بگذارید، برای هماهنگی با شما تماس می‌گیریم.</p>
-          <form id="joinForm" autocomplete="on">
-            <div class="field">
-              <label for="jName">نام و نام خانوادگی</label>
-              <input class="input" id="jName" name="name" maxlength="60" required autocomplete="name">
-            </div>
-            <div class="field">
-              <label for="jShop">نام آرایشگاه</label>
-              <input class="input" id="jShop" name="shop" maxlength="60" required autocomplete="organization">
-            </div>
-            <div class="field">
-              <label for="jPhone">شماره تماس</label>
-              <input class="input ltr-input" id="jPhone" name="phone" type="tel" inputmode="tel" maxlength="16" required autocomplete="tel" placeholder="۰۹۱۲۰۰۰۰۰۰۰">
-            </div>
-            <div class="field">
-              <label for="jCity">شهر <span class="muted" style="font-weight:400">(اختیاری)</span></label>
-              <input class="input" id="jCity" name="city" maxlength="40" autocomplete="address-level2">
-            </div>
-            <div class="field">
-              <label for="jNote">توضیحات <span class="muted" style="font-weight:400">(اختیاری)</span></label>
-              <textarea class="input" id="jNote" name="note" rows="3" maxlength="600" placeholder="تعداد آرایشگرها یا هر سؤالی که دارید"></textarea>
-            </div>
-            <input type="text" name="website" id="jWebsite" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
-            <button class="btn btn-primary btn-lg btn-block" id="joinSave">${icon('check')}ارسال درخواست</button>
-          </form>
-      </div>
+      <div class="card join-box" id="joinBox">${store.get('hd_lead') ? '<div class="loading"><span class="spinner"></span></div>' : orderFormHTML()}</div>
 
       <section class="join-bottom" id="joinBottom">
         <b>سؤالی دارید؟ مستقیم با ما در تماس باشید</b>
@@ -863,23 +838,79 @@ function renderJoin(from) {
   window.addEventListener('scroll', updateSticky, { passive: true });
   updateSticky();
 
-  $('#joinForm').addEventListener('submit', async (ev) => {
+  // سفارشی که قبلاً از این مرورگر ثبت شده ادامه پیدا می‌کند (مثلاً بعد از کپی شماره کارت و برگشت به سایت)
+  if (!store.get('hd_lead')) { bindOrderForm(from); return; }
+  orderApi('GET', '/leads/me').then((res) => {
+    if (!$('#joinBox')) return;
+    showOrder(res);
+    if (orderStage(res.order) === 'pay') setTimeout(() => $('#joinBox').scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+  }).catch((err) => {
+    if (err.status === 404) store.set('hd_lead', null);
+    const box = $('#joinBox');
+    if (box) { box.innerHTML = orderFormHTML(); bindOrderForm(from); }
+  });
+}
+
+/* ================================================================ order: form, payment, receipt */
+const orderApi = (method, path, body) => api(method, path, body, { 'X-Lead-Token': store.get('hd_lead') || '' });
+
+function orderFormHTML(prev) {
+  const plan = prev?.plan || 6;
+  return `
+    <h2 class="join-box-title">درخواست ساخت سایت</h2>
+    <p class="muted join-box-sub">پلن را انتخاب و اطلاعاتتان را وارد کنید؛ در مرحلهٔ بعد اطلاعات پرداخت نمایش داده می‌شود.</p>
+    <form id="joinForm" autocomplete="on">
+      <div class="field">
+        <span class="label">پلن</span>
+        <div class="plan-options">
+          ${PLANS.map((p) => `<label class="plan-opt">
+            <input type="radio" name="plan" value="${p.months}" ${p.months === plan ? 'checked' : ''}>
+            <span><b>${p.title}</b><small>${toman(p.price)} تومان</small></span>
+          </label>`).join('')}
+        </div>
+      </div>
+      <div class="field">
+        <label for="jName">نام و نام خانوادگی</label>
+        <input class="input" id="jName" name="name" maxlength="60" required autocomplete="name" value="${esc(prev?.name || '')}">
+      </div>
+      <div class="field">
+        <label for="jShop">نام آرایشگاه</label>
+        <input class="input" id="jShop" name="shop" maxlength="60" required autocomplete="organization" value="${esc(prev?.shopName || '')}">
+      </div>
+      <div class="field">
+        <label for="jPhone">شماره تماس</label>
+        <input class="input ltr-input" id="jPhone" name="phone" type="tel" inputmode="tel" maxlength="16" required autocomplete="tel" placeholder="۰۹۱۲۰۰۰۰۰۰۰" value="${esc(prev?.phone || '')}">
+      </div>
+      <div class="field">
+        <label for="jCity">شهر <span class="muted" style="font-weight:400">(اختیاری)</span></label>
+        <input class="input" id="jCity" name="city" maxlength="40" autocomplete="address-level2" value="${esc(prev?.city || '')}">
+      </div>
+      <div class="field">
+        <label for="jNote">توضیحات <span class="muted" style="font-weight:400">(اختیاری)</span></label>
+        <textarea class="input" id="jNote" name="note" rows="3" maxlength="600" placeholder="تعداد آرایشگرها یا هر سؤالی که دارید"></textarea>
+      </div>
+      <input type="text" name="website" id="jWebsite" tabindex="-1" autocomplete="off" class="hp" aria-hidden="true">
+      <button class="btn btn-primary btn-lg btn-block" id="joinSave">ثبت و ادامه به پرداخت ${icon('left')}</button>
+    </form>`;
+}
+
+function bindOrderForm(from, prev) {
+  const form = $('#joinForm');
+  if (!form) return;
+  form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const btn = $('#joinSave');
     btn.disabled = true;
     try {
       const res = await api('POST', '/leads', {
+        plan: Number((form.querySelector('input[name="plan"]:checked') || {}).value || 6),
         name: $('#jName').value.trim(), shopName: $('#jShop').value.trim(), phone: toEn($('#jPhone').value),
         city: $('#jCity').value.trim(), note: $('#jNote').value.trim(),
-        website: $('#jWebsite').value, source: from || '',
+        website: $('#jWebsite').value, source: from || prev?.source || '',
       });
-      $('#joinBox').innerHTML = `
-        <div class="empty" style="padding:20px 8px 8px">
-          <div class="big-icon" style="background:var(--free-soft);color:var(--free)">${icon('check')}</div>
-          <h3>درخواست شما ثبت شد</h3>
-          <p>به‌زودی برای هماهنگی با شما تماس می‌گیریم. اگر تا ۲۴ ساعت آینده تماسی از ما نداشتید، لطفاً خودتان با ما تماس بگیرید:</p>
-        </div>
-        ${supportHTML(res.support)}`;
+      if (res.token) store.set('hd_lead', res.token);
+      showOrder(res);
+      $('#joinBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (err) {
       btn.disabled = false;
       toast(err.message, true);
@@ -887,8 +918,147 @@ function renderJoin(from) {
   });
 }
 
+// مرحلهٔ سفارش: pay = منتظر پرداخت و رسید · sent = رسید رسیده · done = انجام شده · closed = بسته شده
+function orderStage(o) {
+  if (!o) return null;
+  if (o.status === 'done') return 'done';
+  if (o.status === 'rejected') return 'closed';
+  return o.receipts > 0 ? 'sent' : 'pay';
+}
+
+function showOrder({ order, support, payment }) {
+  const box = $('#joinBox');
+  if (!box || !order) return;
+  state.order = { order, support, payment };
+  $$('[data-action="join-form"]').forEach((b) => { b.lastChild.textContent = 'ادامهٔ سفارش'; });
+  const stage = orderStage(order);
+  const plan = planOf(order.plan) || planOf(6);
+  const head = (ic, cls, title, text) => `
+    <div class="order-head">
+      <span class="order-icon ${cls}">${icon(ic)}</span>
+      <div><h2>${title}</h2><p>${text}</p></div>
+    </div>`;
+  const restart = `<button class="btn btn-ghost order-restart" data-action="order-restart">ثبت سفارش جدید یا اصلاح اطلاعات</button>`;
+
+  if (stage === 'done' || stage === 'closed') {
+    box.innerHTML = `${head(stage === 'done' ? 'check' : 'x', stage === 'done' ? 'ok' : 'muted',
+      stage === 'done' ? 'سایت شما ساخته شده است' : 'این سفارش بسته شده است',
+      stage === 'done' ? 'برای هر سؤال یا دریافت اطلاعات ورود با ما در تماس باشید.' : 'اگر هنوز سایت می‌خواهید، سفارش جدید ثبت کنید یا با ما تماس بگیرید.')}
+      ${supportHTML(support)}${restart}`;
+    return;
+  }
+  if (stage === 'sent') {
+    box.innerHTML = `${head('check', 'ok', 'رسید پرداخت شما دریافت شد',
+      `پس از تأیید پرداخت، سایت «${esc(order.shopName)}» ظرف ${fa(2)} تا ${fa(5)} روز راه‌اندازی می‌شود. اگر تا ۲۴ ساعت آینده تماسی از ما نداشتید، لطفاً خودتان با ما تماس بگیرید:`)}
+      ${supportHTML(support)}
+      <div class="order-summary"><span>${plan.title}</span><b>${toman(plan.price)} تومان</b></div>
+      <label class="btn btn-block order-again">${icon('plus')}ارسال رسید دیگر<input type="file" accept="image/*" id="receiptFile" hidden></label>
+      ${restart}`;
+    bindReceipt();
+    return;
+  }
+
+  // مرحلهٔ پرداخت
+  const card = payment?.card || '';
+  box.innerHTML = `
+    ${head('check', 'ok', 'سفارش شما ثبت شد', `مرحلهٔ آخر: مبلغ پلن را کارت‌به‌کارت کنید و تصویر رسید را همین‌جا بفرستید.`)}
+    <div class="field">
+      <span class="label">پلن انتخابی</span>
+      <div class="plan-chips">${PLANS.map((p) => `<button type="button" class="pick ${p.months === plan.months ? 'active' : ''}" data-action="order-plan" data-plan="${p.months}">${p.title} <small>${toman(p.price)}</small></button>`).join('')}</div>
+    </div>
+    <div class="pay-card">
+      <div class="pay-amount"><span>مبلغ قابل پرداخت</span><b>${toman(plan.price)} تومان</b></div>
+      <div class="pay-label">شماره کارت</div>
+      <div class="pay-number ltr">${fa(card.replace(/(\d{4})(?=\d)/g, '$1 '))}</div>
+      <div class="pay-holder">به نام <b>${esc(payment?.holder || '')}</b></div>
+      <button class="btn btn-block" data-action="copy-card" data-card="${esc(card)}">${icon('check')}کپی شماره کارت</button>
+    </div>
+    <div class="pay-note">${icon('clock')}<span>بعد از کپی شماره کارت می‌توانید از سایت خارج شوید و واریز کنید؛ وقتی برگردید، سفارشتان همین‌جا منتظر ارسال رسید است.</span></div>
+    <div id="receiptArea">
+      <label class="btn btn-primary btn-lg btn-block">${icon('plus')}ارسال تصویر رسید<input type="file" accept="image/*" id="receiptFile" hidden></label>
+    </div>
+    ${restart}`;
+  bindReceipt();
+}
+
+// تصویر رسید قبل از ارسال در مرورگر کوچک می‌شود تا روی اینترنت موبایل سریع ارسال شود
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, 1400 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * scale));
+      c.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      let q = 0.8, out = c.toDataURL('image/jpeg', q);
+      while (out.length > 850 * 1024 && q > 0.35) { q -= 0.15; out = c.toDataURL('image/jpeg', q); }
+      if (out.length > 850 * 1024) reject(new AppError('حجم تصویر زیاد است؛ تصویر دیگری انتخاب کنید'));
+      else resolve(out);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new AppError('فایل انتخاب‌شده تصویر نیست')); };
+    img.src = url;
+  });
+}
+
+function bindReceipt() {
+  const input = $('#receiptFile');
+  if (!input) return;
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    input.value = '';
+    if (!file) return;
+    let image;
+    try { image = await compressImage(file); } catch (err) { toast(err.message, true); return; }
+    // پیش‌نمایش و تأیید قبل از ارسال
+    openModal(`
+      <div class="modal sm" role="dialog" aria-modal="true">
+        <div class="modal-head"><h2>ارسال رسید</h2><button class="btn btn-ghost icon-btn sm" data-action="close" aria-label="بستن">${icon('x')}</button></div>
+        <div class="modal-body"><img class="receipt-img" src="${image}" alt="رسید پرداخت"></div>
+        <div class="modal-foot">
+          <button class="btn btn-primary btn-lg" id="receiptSend">${icon('check')}ارسال رسید</button>
+          <button class="btn btn-lg" data-action="close">انصراف</button>
+        </div>
+      </div>`);
+    $('#receiptSend').addEventListener('click', async () => {
+      const btn = $('#receiptSend');
+      btn.disabled = true;
+      btn.lastChild.textContent = 'در حال ارسال…';
+      try {
+        const res = await orderApi('POST', '/leads/me/receipt', { image });
+        closeModal();
+        showOrder({ ...state.order, order: res.order });
+        toast('رسید ارسال شد');
+      } catch (err) {
+        btn.disabled = false;
+        btn.lastChild.textContent = 'ارسال رسید';
+        toast(err.message, true);
+      }
+    });
+  });
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* مرورگرهای قدیمی */ }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;right:0;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { /* noop */ }
+  ta.remove();
+  return ok;
+}
+
 // لیست درخواست‌ها در پنل مدیر سایت
-const LEAD_STATUS = [['new', 'جدید'], ['contacted', 'تماس گرفته شد'], ['done', 'آرایشگاه ساخته شد'], ['rejected', 'منصرف شد']];
+const LEAD_STATUS = [['new', 'جدید'], ['contacted', 'تماس گرفته شد'], ['paid', 'رسید رسیده'], ['done', 'آرایشگاه ساخته شد'], ['rejected', 'منصرف شد']];
 function leadsHTML() {
   const leads = state.leads || [];
   if (!leads.length) {
@@ -907,6 +1077,8 @@ function leadsHTML() {
         <a class="btn" href="tel:${esc(l.phone)}">${icon('phone')}<span class="ltr">${fa(esc(l.phone))}</span></a>
         <a class="btn" href="sms:${esc(l.phone)}">${icon('chat')}پیامک</a>
       </div>
+      ${planOf(l.plan) ? `<div class="lead-plan">${icon('calendar')}<span>پلن ${planOf(l.plan).title}، ${toman(planOf(l.plan).price)} تومان</span></div>` : ''}
+      ${l.receiptId ? `<button class="btn lead-receipt" data-action="view-receipt" data-id="${esc(l.receiptId)}">${icon('eye')}مشاهدهٔ رسید پرداخت${l.receipts > 1 ? ` <small>(${fa(l.receipts)} رسید، آخرین)</small>` : ''}</button>` : ''}
       ${l.note ? `<p class="lead-note">${esc(l.note)}</p>` : ''}
       ${l.sourceName ? `<div class="muted" style="font-size:12.5px;margin-bottom:8px">از صفحهٔ «${esc(l.sourceName)}»</div>` : ''}
       <div class="lead-foot">
@@ -1717,6 +1889,46 @@ document.addEventListener('click', async (ev) => {
       $('#joinBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
       const name = $('#jName');
       if (name) setTimeout(() => name.focus({ preventScroll: true }), 450);
+      return;
+    }
+    case 'join-plan': {
+      // انتخاب پلن از کارت تعرفه: در فرم یا در صفحهٔ پرداخت اعمال می‌شود
+      const months = Number(el.dataset.plan);
+      const radio = $(`#joinForm input[name="plan"][value="${months}"]`);
+      if (radio) radio.checked = true;
+      else if (orderStage(state.order?.order) === 'pay') $(`[data-action="order-plan"][data-plan="${months}"]`)?.click();
+      $('#joinBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    case 'order-plan': {
+      if (el.classList.contains('active')) return;
+      try {
+        const res = await orderApi('PUT', '/leads/me', { plan: Number(el.dataset.plan) });
+        showOrder({ ...state.order, order: res.order });
+      } catch (err) { toast(err.message, true); }
+      return;
+    }
+    case 'copy-card':
+      toast(await copyText(el.dataset.card) ? 'شماره کارت کپی شد' : 'کپی نشد؛ شماره را دستی وارد کنید', false);
+      return;
+    case 'order-restart': {
+      const prev = state.order?.order;
+      store.set('hd_lead', null);
+      state.order = null;
+      $('#joinBox').innerHTML = orderFormHTML(prev);
+      bindOrderForm(route().from, prev);
+      $$('[data-action="join-form"]').forEach((b) => { b.lastChild.textContent = 'درخواست ساخت سایت'; });
+      return;
+    }
+    case 'view-receipt': {
+      try {
+        const { image } = await api('GET', `/admin/receipts/${encodeURIComponent(el.dataset.id)}`);
+        openModal(`
+          <div class="modal" role="dialog" aria-modal="true">
+            <div class="modal-head"><h2>رسید پرداخت</h2><button class="btn btn-ghost icon-btn sm" data-action="close" aria-label="بستن">${icon('x')}</button></div>
+            <div class="modal-body"><img class="receipt-img" src="${image}" alt="رسید پرداخت"></div>
+          </div>`);
+      } catch (err) { toast(err.message, true); }
       return;
     }
     case 'join-contact':

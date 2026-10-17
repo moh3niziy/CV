@@ -22,6 +22,12 @@ const FREE_DAYS = 30;
 const WARN_DAYS = 7;
 const GRACE_DAYS = 7;
 const SUPPORT = { phone: '09399515814', telegram: 'moh3nIziy' }; // راه تماس برای تمدید اشتراک
+// پرداخت فقط کارت‌به‌کارت است؛ کاربر بعد از واریز تصویر رسید را داخل سایت می‌فرستد
+const PAYMENT = { card: '6063731203923199', holder: 'محسن ایزی' };
+const PLAN_MONTHS = [1, 3, 6];
+const MAX_RECEIPT = 900 * 1024;   // حداکثر حجم تصویر رسید (data URL، بعد از کوچک‌شدن در مرورگر)
+const MAX_RECEIPTS_PER_LEAD = 5;
+const LEAD_STATUSES = ['new', 'contacted', 'paid', 'done', 'rejected'];
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
@@ -92,13 +98,16 @@ async function migrate(db) {
     db.prepare(`CREATE TABLE IF NOT EXISTS leads (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT NOT NULL, note TEXT NOT NULL,
       source_shop TEXT, status TEXT NOT NULL DEFAULT 'new', ip TEXT, created_at INTEGER NOT NULL)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS receipts (
+      id TEXT PRIMARY KEY, lead_id TEXT, shop_id TEXT, plan INTEGER NOT NULL, image TEXT NOT NULL, created_at INTEGER NOT NULL)`),
     db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('secret', ?)").bind(randomHex(32)),
   ]);
   secret = (await db.prepare("SELECT value FROM meta WHERE key = 'secret'").first()).value;
   // ستون‌هایی که بعداً اضافه شده‌اند
   for (const [table, col] of [['shops', 'active INTEGER NOT NULL DEFAULT 1'], ['shops', "telegram TEXT NOT NULL DEFAULT ''"],
     ['shops', "instagram TEXT NOT NULL DEFAULT ''"], ['shops', "expires_at TEXT NOT NULL DEFAULT ''"],
-    ['leads', "shop_name TEXT NOT NULL DEFAULT ''"], ['leads', "city TEXT NOT NULL DEFAULT ''"]]) {
+    ['leads', "shop_name TEXT NOT NULL DEFAULT ''"], ['leads', "city TEXT NOT NULL DEFAULT ''"],
+    ['leads', 'plan INTEGER NOT NULL DEFAULT 0'], ['leads', "token TEXT NOT NULL DEFAULT ''"]]) {
     try {
       await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col}`).run();
     } catch (err) {
@@ -257,6 +266,30 @@ function cleanSocial(value, urlRe, idRe, label) {
   return v;
 }
 
+// شمارهٔ موبایل به شکل یکسان 09xxxxxxxxx ذخیره می‌شود تا سفارش تکراری ساخته نشود؛ تلفن ثابت هم پذیرفته است
+function cleanPhone(v) {
+  const p = toEn(v).replace(/[\s-]/g, '');
+  const m = p.match(/^(?:\+98|0098|0)?(9\d{9})$/);
+  if (m) return '0' + m[1];
+  return /^0\d{10}$/.test(p) ? p : '';
+}
+
+function cleanReceipt(v) {
+  const image = String(v || '');
+  if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image)) throw new HttpError(400, 'تصویر رسید معتبر نیست');
+  if (image.length > MAX_RECEIPT) throw new HttpError(413, 'حجم تصویر رسید زیاد است');
+  return image;
+}
+
+// وضعیت سفارش برای خود کاربر (بدون اطلاعات داخلی مثل IP)
+async function leadView(db, token) {
+  const row = await db.prepare(`SELECT l.id, l.name, l.phone, l.shop_name AS shopName, l.city, l.plan, l.status,
+    (SELECT COUNT(*) FROM receipts r WHERE r.lead_id = l.id) AS receipts,
+    (SELECT MAX(created_at) FROM receipts r WHERE r.lead_id = l.id) AS receiptAt
+    FROM leads l WHERE l.token = ?`).bind(token).first();
+  return row || null;
+}
+
 async function getShop(db, id) {
   const row = await db.prepare('SELECT id, name, location, telegram, instagram, data, version, active, expires_at FROM shops WHERE id = ?').bind(id).first();
   if (!row) throw new HttpError(404, 'آرایشگاه پیدا نشد');
@@ -380,29 +413,76 @@ async function handleApi(request, env, path) {
   }
 
   // ---- راه‌های تماس با پشتیبانی (برای صفحهٔ درخواست ساخت سایت)
-  if (method === 'GET' && path === '/api/support') return json({ support: SUPPORT });
+  if (method === 'GET' && path === '/api/support') return json({ support: SUPPORT, payment: PAYMENT });
 
   // ---- درخواست ساخت سایت از صفحهٔ «تو هم می‌خواهی؟» (عمومی)
+  // هر شماره تلفن یک سفارش دارد؛ توکن سفارش در مرورگر کاربر می‌ماند تا بعداً پرداخت و ارسال رسید را ادامه دهد
   if (method === 'POST' && path === '/api/leads') {
     const body = await readJson(request);
     if (body.website) return json({ ok: true }); // فیلد مخفی ضد ربات
     const name = String(body.name || '').trim();
-    const phone = toEn(body.phone).replace(/[\s-]/g, '');
+    const phone = cleanPhone(body.phone);
     const note = String(body.note || '').trim();
     const shopName = String(body.shopName || '').trim();
     const city = String(body.city || '').trim();
+    const plan = Number(body.plan);
     if (name.length < 2 || name.length > 60) throw new HttpError(400, 'نام را وارد کنید');
     if (shopName.length < 2 || shopName.length > 60) throw new HttpError(400, 'نام آرایشگاه را وارد کنید');
-    if (!/^(\+98|0098|0)?9\d{9}$/.test(phone) && !/^0\d{10}$/.test(phone)) throw new HttpError(400, 'شماره تماس معتبر نیست');
+    if (!phone) throw new HttpError(400, 'شماره تماس معتبر نیست');
+    if (!PLAN_MONTHS.includes(plan)) throw new HttpError(400, 'یک پلن انتخاب کنید');
     if (city.length > 40) throw new HttpError(400, 'نام شهر طولانی است');
     if (note.length > 600) throw new HttpError(400, 'توضیحات طولانی است');
     const ip = request.headers.get('cf-connecting-ip') || '';
     const recent = await db.prepare('SELECT COUNT(*) AS n FROM leads WHERE ip = ? AND created_at > ?').bind(ip, Date.now() - 3600e3).first();
     if (ip && recent.n >= 5) throw new HttpError(429, 'تعداد درخواست‌ها زیاد است؛ کمی بعد دوباره تلاش کنید');
     const source = String(body.source || '').slice(0, 20) || null;
-    await db.prepare(`INSERT INTO leads (id, name, phone, shop_name, city, note, source_shop, status, ip, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(newId(), name, phone, shopName, city, note, source, 'new', ip, Date.now()).run();
-    return json({ ok: true, support: SUPPORT });
+    // اگر این شماره قبلاً سفارش داده، همان سفارش به‌روز می‌شود (نه یک سفارش تکراری)
+    const old = await db.prepare('SELECT id, token FROM leads WHERE phone = ? ORDER BY created_at DESC LIMIT 1').bind(phone).first();
+    const token = old?.token || randomHex(16);
+    if (old) {
+      await db.prepare('UPDATE leads SET name = ?, shop_name = ?, city = ?, note = ?, plan = ?, token = ? WHERE id = ?')
+        .bind(name, shopName, city, note, plan, token, old.id).run();
+    } else {
+      await db.prepare(`INSERT INTO leads (id, name, phone, shop_name, city, note, plan, token, source_shop, status, ip, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`).bind(newId(), name, phone, shopName, city, note, plan, token, source, ip, Date.now()).run();
+    }
+    return json({ token, order: await leadView(db, token), support: SUPPORT, payment: PAYMENT });
+  }
+
+  // ---- سفارش من (با توکنی که در مرورگر کاربر ذخیره شده)
+  if (parts[0] === 'leads' && parts[1] === 'me') {
+    const token = request.headers.get('x-lead-token') || '';
+    const order = token ? await leadView(db, token) : null;
+    if (!order) throw new HttpError(404, 'سفارش پیدا نشد');
+    if (method === 'GET' && parts.length === 2) return json({ order, support: SUPPORT, payment: PAYMENT });
+    // تغییر پلن قبل از پرداخت
+    if (method === 'PUT' && parts.length === 2) {
+      const plan = Number((await readJson(request)).plan);
+      if (!PLAN_MONTHS.includes(plan)) throw new HttpError(400, 'یک پلن انتخاب کنید');
+      await db.prepare('UPDATE leads SET plan = ? WHERE id = ?').bind(plan, order.id).run();
+      return json({ order: await leadView(db, token) });
+    }
+    // ارسال تصویر رسید پرداخت
+    if (method === 'POST' && parts[2] === 'receipt' && parts.length === 3) {
+      const image = cleanReceipt((await readJson(request)).image);
+      if (order.receipts >= MAX_RECEIPTS_PER_LEAD) throw new HttpError(429, 'تعداد رسیدهای ارسالی زیاد است؛ با پشتیبانی تماس بگیرید');
+      await db.batch([
+        db.prepare('INSERT INTO receipts (id, lead_id, shop_id, plan, image, created_at) VALUES (?, ?, NULL, ?, ?, ?)')
+          .bind(newId(), order.id, order.plan || 0, image, Date.now()),
+        db.prepare("UPDATE leads SET status = 'paid' WHERE id = ? AND status IN ('new', 'contacted')").bind(order.id),
+      ]);
+      return json({ order: await leadView(db, token) });
+    }
+    throw new HttpError(404, 'مسیر پیدا نشد');
+  }
+
+  // ---- تصویر یک رسید (فقط مدیر سایت)
+  if (parts[0] === 'admin' && parts[1] === 'receipts' && parts[2] && parts.length === 3 && method === 'GET') {
+    requireAuth(auth);
+    if (auth.r !== 'super') throw new HttpError(403, 'به این بخش دسترسی ندارید');
+    const row = await db.prepare('SELECT image FROM receipts WHERE id = ?').bind(parts[2]).first();
+    if (!row) throw new HttpError(404, 'رسید پیدا نشد');
+    return json({ image: row.image });
   }
 
   // ---- مدیریت درخواست‌ها (فقط مدیر سایت)
@@ -411,20 +491,25 @@ async function handleApi(request, env, path) {
     if (auth.r !== 'super') throw new HttpError(403, 'به این بخش دسترسی ندارید');
     const leadId = parts[2];
     if (method === 'GET' && !leadId) {
-      const { results } = await db.prepare(`SELECT l.id, l.name, l.phone, l.shop_name AS shopName, l.city, l.note, l.status, l.created_at AS createdAt,
+      const { results } = await db.prepare(`SELECT l.id, l.name, l.phone, l.shop_name AS shopName, l.city, l.note, l.plan, l.status, l.created_at AS createdAt,
+        (SELECT r.id FROM receipts r WHERE r.lead_id = l.id ORDER BY r.created_at DESC LIMIT 1) AS receiptId,
+        (SELECT COUNT(*) FROM receipts r WHERE r.lead_id = l.id) AS receipts,
         l.source_shop AS sourceShop, s.name AS sourceName FROM leads l LEFT JOIN shops s ON s.id = l.source_shop
         ORDER BY l.created_at DESC LIMIT 300`).all();
       return json({ leads: results });
     }
     if (method === 'PUT' && leadId) {
       const { status } = await readJson(request);
-      if (!['new', 'contacted', 'done', 'rejected'].includes(status)) throw new HttpError(400, 'وضعیت نامعتبر است');
+      if (!LEAD_STATUSES.includes(status)) throw new HttpError(400, 'وضعیت نامعتبر است');
       const res = await db.prepare('UPDATE leads SET status = ? WHERE id = ?').bind(status, leadId).run();
       if (!res.meta.changes) throw new HttpError(404, 'درخواست پیدا نشد');
       return json({ id: leadId, status });
     }
     if (method === 'DELETE' && leadId) {
-      await db.prepare('DELETE FROM leads WHERE id = ?').bind(leadId).run();
+      await db.batch([
+        db.prepare('DELETE FROM leads WHERE id = ?').bind(leadId),
+        db.prepare('DELETE FROM receipts WHERE lead_id = ?').bind(leadId),
+      ]);
       return json({ id: leadId });
     }
     throw new HttpError(404, 'مسیر پیدا نشد');

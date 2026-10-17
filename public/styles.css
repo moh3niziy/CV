@@ -492,6 +492,49 @@ textarea.input { resize: vertical; line-height: 1.8; }
 .faq summary::after { content: '+'; font-size: 20px; line-height: 1; color: var(--accent); flex-shrink: 0; }
 .faq details[open] summary::after { content: '−'; }
 .faq details p { margin: 0; padding: 0 16px 14px; color: var(--muted); font-size: 13.5px; }
+.plan-pick { margin-top: 12px; width: 100%; }
+.join-box-title { margin: 0 0 4px; font-size: 18px; }
+.join-box-sub { margin: 0 0 16px; font-size: 13.5px; }
+.plan-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.plan-opt { position: relative; cursor: pointer; }
+.plan-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.plan-opt span {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px; border-radius: 12px;
+  border: 1.5px solid var(--border); background: var(--surface); text-align: center; transition: border-color .15s, background .15s;
+}
+.plan-opt b { font-size: 14px; }
+.plan-opt small { font-size: 12px; color: var(--muted); }
+.plan-opt input:checked + span { border-color: var(--accent); background: var(--accent-soft); }
+.plan-opt input:checked + span b { color: var(--accent); }
+.plan-opt input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.plan-chips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.plan-chips .pick { flex-direction: column; justify-content: center; gap: 0; padding: 8px 4px; line-height: 1.5; }
+.order-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 16px; }
+.order-head h2 { margin: 0 0 2px; font-size: 18px; }
+.order-head p { margin: 0; color: var(--muted); font-size: 13.5px; }
+.order-icon { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; flex-shrink: 0; background: var(--free-soft); color: var(--free); }
+.order-icon.muted { background: var(--surface-2); color: var(--muted); }
+.pay-card {
+  border-radius: 16px; padding: 16px; margin-bottom: 12px; text-align: center;
+  background: linear-gradient(135deg, var(--accent-soft), color-mix(in srgb, var(--accent-soft) 40%, var(--surface)));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+.pay-amount { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px dashed color-mix(in srgb, var(--accent) 35%, var(--border)); font-size: 13.5px; }
+.pay-amount b { font-size: 18px; color: var(--accent); }
+.pay-label { font-size: 12.5px; color: var(--muted); }
+.pay-number { font-size: 22px; font-weight: 800; letter-spacing: .5px; margin: 2px 0 4px; display: block; }
+.pay-holder { font-size: 13.5px; margin-bottom: 12px; color: var(--muted); }
+.pay-holder b { color: var(--text); }
+.pay-note { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
+.pay-note svg { margin-top: 3px; }
+.order-summary { display: flex; justify-content: space-between; padding: 10px 14px; margin: 14px 0 10px; border-radius: 12px; background: var(--surface-2); font-size: 14px; }
+.order-restart { display: block; margin: 12px auto 0; font-size: 12.5px; color: var(--muted); }
+.order-again { margin-top: 4px; }
+.receipt-img { display: block; max-width: 100%; max-height: 70vh; margin: 0 auto; border-radius: 12px; border: 1px solid var(--border); }
+.lead-plan { display: flex; gap: 6px; align-items: center; font-size: 13.5px; margin-top: 2px; color: var(--muted); }
+.lead-receipt { margin: 0 0 8px; }
+.lead-paid { border-color: color-mix(in srgb, var(--free) 50%, var(--border)); }
+.lead-paid .lead-badge { background: var(--free-soft); color: var(--free); }
 .hp { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); opacity: 0; pointer-events: none; }
 #joinForm { position: relative; }
 .seg .count { background: var(--busy); color: #fff; border-radius: 999px; padding: 0 7px; font-size: 11.5px; line-height: 1.6; }
@@ -640,6 +683,7 @@ textarea.input { resize: vertical; line-height: 1.8; }
   .plan-price { grid-column: 2; grid-row: 1 / 3; margin: 0; text-align: end; line-height: 1.3; }
   .plan-price b { display: block; font-size: 24px; }
   .plan-save { grid-column: 1 / -1; margin-top: 10px; text-align: center; }
+  .plan-pick { grid-column: 1 / -1; margin-top: 10px; }
   .plan-flag { left: auto; inset-inline-start: 14px; transform: none; }
   /* موبایل: ویژگی‌ها در یک کارت به‌شکل فهرست */
   .join-features { gap: 0; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); overflow: hidden; }
