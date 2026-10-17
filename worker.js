@@ -108,7 +108,7 @@ async function migrate(db) {
     ['shops', "instagram TEXT NOT NULL DEFAULT ''"], ['shops', "expires_at TEXT NOT NULL DEFAULT ''"],
     ['leads', "shop_name TEXT NOT NULL DEFAULT ''"], ['leads', "city TEXT NOT NULL DEFAULT ''"],
     ['leads', 'plan INTEGER NOT NULL DEFAULT 0'], ['leads', "token TEXT NOT NULL DEFAULT ''"],
-    ['receipts', "status TEXT NOT NULL DEFAULT 'new'"]]) {
+    ['receipts', "status TEXT NOT NULL DEFAULT 'new'"], ['leads', "shop_id TEXT NOT NULL DEFAULT ''"]]) {
     try {
       await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col}`).run();
     } catch (err) {
@@ -537,7 +537,9 @@ async function handleApi(request, env, path) {
       const { results } = await db.prepare(`SELECT l.id, l.name, l.phone, l.shop_name AS shopName, l.city, l.note, l.plan, l.status, l.created_at AS createdAt,
         (SELECT r.id FROM receipts r WHERE r.lead_id = l.id ORDER BY r.created_at DESC LIMIT 1) AS receiptId,
         (SELECT COUNT(*) FROM receipts r WHERE r.lead_id = l.id) AS receipts,
-        l.source_shop AS sourceShop, s.name AS sourceName FROM leads l LEFT JOIN shops s ON s.id = l.source_shop
+        l.source_shop AS sourceShop, s.name AS sourceName,
+        (SELECT c.id FROM shops c WHERE c.id = l.shop_id) AS shopId
+        FROM leads l LEFT JOIN shops s ON s.id = l.source_shop
         ORDER BY l.created_at DESC LIMIT 300`).all();
       return json({ leads: results });
     }
@@ -567,12 +569,23 @@ async function handleApi(request, env, path) {
     requireAuth(auth);
     if (auth.r !== 'super') throw new HttpError(403, 'فقط مدیر سایت می‌تواند آرایشگاه اضافه کند');
     const body = await readJson(request);
-    const shop = { id: newId(), ...cleanShop(body), expiresAt: addDaysISO(localNow().date, FREE_DAYS) };
+    // ساخت از روی درخواست سایت: اشتراک به اندازهٔ پلن سفارش (هر ماه ۳۰ روز) و درخواست «ساخته شد» می‌شود
+    let lead = null;
+    if (body.leadId) {
+      lead = await db.prepare('SELECT id, plan, shop_id FROM leads WHERE id = ?').bind(String(body.leadId)).first();
+      if (!lead) throw new HttpError(404, 'درخواست پیدا نشد');
+      if (lead.shop_id && await db.prepare('SELECT id FROM shops WHERE id = ?').bind(lead.shop_id).first()) {
+        throw new HttpError(409, 'برای این درخواست قبلاً آرایشگاه ساخته شده است');
+      }
+    }
+    const days = lead && PLAN_MONTHS.includes(lead.plan) ? lead.plan * 30 : FREE_DAYS;
+    const shop = { id: newId(), ...cleanShop(body), expiresAt: addDaysISO(localNow().date, days) };
     const ownerOps = await setOwner(db, shop.id, body.ownerUsername, body.ownerPassword, true);
     await db.batch([
       db.prepare('INSERT INTO shops (id, name, location, telegram, instagram, expires_at, data, version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)')
         .bind(shop.id, shop.name, shop.location, shop.telegram, shop.instagram, shop.expiresAt, JSON.stringify(EMPTY), Date.now()),
       ...ownerOps,
+      ...(lead ? [db.prepare("UPDATE leads SET status = 'done', shop_id = ? WHERE id = ?").bind(shop.id, lead.id)] : []),
     ]);
     return json(shop);
   }

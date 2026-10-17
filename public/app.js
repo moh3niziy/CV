@@ -571,7 +571,8 @@ function renderHome() {
   });
 }
 
-async function openShopModal(shop) {
+// prefill: ساخت آرایشگاه از روی درخواست سایت (نام، شهر، شمارهٔ مالک و پلن از قبل پر می‌شود)
+async function openShopModal(shop, prefill) {
   let owner = '';
   if (shop) {
     try {
@@ -583,21 +584,23 @@ async function openShopModal(shop) {
   openModal(`
     <div class="modal sm" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <h2>${shop ? 'ویرایش آرایشگاه' : 'آرایشگاه جدید'}</h2>
+        <h2>${shop ? 'ویرایش آرایشگاه' : prefill ? 'ساخت آرایشگاه از درخواست' : 'آرایشگاه جدید'}</h2>
         <button class="btn btn-ghost icon-btn sm" data-action="close" aria-label="بستن">${icon('x')}</button>
       </div>
       <form class="modal-body" id="shopForm" autocomplete="off">
+        ${prefill ? `<div class="alert alert-warn prefill-note">${icon('check')}<span>اطلاعات از درخواست «${esc(prefill.person)}» پر شده؛ قبل از ثبت بررسی کنید.
+          ${planOf(prefill.plan) ? `اشتراک پلن ${planOf(prefill.plan).title} (تا ${shortDate(addDays(todayISO(), prefill.plan * 30))}) ثبت می‌شود.` : ''}</span></div>` : ''}
         <div class="field">
           <label for="sName">نام آرایشگاه</label>
-          <input class="input" id="sName" required maxlength="60" value="${esc(shop?.name || '')}" placeholder="مثلاً آرایشگاه رضا">
+          <input class="input" id="sName" required maxlength="60" value="${esc(shop?.name || prefill?.name || '')}" placeholder="مثلاً آرایشگاه رضا">
         </div>
         <div class="field">
           <label for="sLoc">لوکیشن</label>
-          <textarea class="input" id="sLoc" required maxlength="300" rows="3" placeholder="آدرس، یا لینک لوکیشن از گوگل‌مپ / نشان / بلد">${esc(shop?.location || '')}</textarea>
+          <textarea class="input" id="sLoc" required maxlength="300" rows="3" placeholder="آدرس، یا لینک لوکیشن از گوگل‌مپ / نشان / بلد">${esc(shop?.location || prefill?.location || '')}</textarea>
           <span class="hint">آدرس متنی یا لینک نقشه؛ برای مشتری‌ها با دکمهٔ «نمایش روی نقشه» نشان داده می‌شود.</span>
         </div>
         ${socialFieldsHTML('s', shop)}
-        ${credFieldsHTML('o', owner, !shop || !owner, 'حساب مالک آرایشگاه')}
+        ${credFieldsHTML('o', owner || prefill?.ownerUsername || '', !shop || !owner, 'حساب مالک آرایشگاه')}
       </form>
       <div class="modal-foot">
         <button class="btn btn-primary btn-lg" id="shopSave">${icon('check')}${shop ? 'ذخیرهٔ تغییرات' : 'ثبت آرایشگاه'}</button>
@@ -611,6 +614,7 @@ async function openShopModal(shop) {
       name: $('#sName').value.trim(), location: $('#sLoc').value.trim(),
       instagram: $('#sIg').value.trim(), telegram: $('#sTg').value.trim(),
       ownerUsername: toEn($('#oUser').value).toLowerCase(), ownerPassword: toEn($('#oPass').value),
+      leadId: prefill?.leadId || undefined,
     };
     if (!payload.name) { $('#sName').focus(); toast('نام آرایشگاه را وارد کنید', true); return; }
     if (!payload.location) { $('#sLoc').focus(); toast('لوکیشن آرایشگاه را وارد کنید', true); return; }
@@ -628,7 +632,8 @@ async function openShopModal(shop) {
       save.disabled = false;
     }
   });
-  setTimeout(() => $('#sName').focus(), 60);
+  // از درخواست فرم پر است و فوکوس نمی‌گیرد تا خلاصهٔ بالای فرم (پلن و تاریخ پایان) دیده شود
+  if (!prefill) setTimeout(() => $('#sName').focus(), 60);
 }
 
 /* ================================================================ customer view */
@@ -746,72 +751,6 @@ function promoHTML() {
   </a>`;
 }
 
-// پیش‌نمایش ساختگی صفحهٔ مشتری داخل قاب گوشی (داده‌های ثابت، با همان اجزای واقعی سایت)
-function demoPhoneHTML() {
-  const open = 600, close = 1200, now = 820;                      // ۱۰:۰۰ تا ۲۰:۰۰، الان ۱۳:۴۰
-  const busy = [[600, 690], [720, 780], [870, 915], [1020, 1080]];
-  const pct = (m) => ((m - open) / (close - open)) * 100;
-  // بخش‌های نوار: قبل از «الان» گذشته، بعد از آن خالی یا رزرو
-  const segs = [['past', open, now]];
-  let t = now;
-  for (const [s, e] of busy) {
-    if (e <= now) continue;
-    if (s > t) segs.push(['free', t, s]);
-    segs.push(['busy', Math.max(s, t), e]);
-    t = e;
-  }
-  if (t < close) segs.push(['free', t, close]);
-  const free = segs.filter(([k]) => k === 'free');
-  const segHTML = segs.map(([k, s, e]) => {
-    const w = pct(e) - pct(s);
-    const label = k === 'free' ? (w >= 15 ? 'خالی' : '') : k === 'busy' ? (w >= 9 ? 'رزرو' : '') : (w >= 16 ? 'گذشته' : '');
-    return `<div class="tl-seg tl-${k}" style="right:${pct(s)}%;width:${w}%">${label}</div>`;
-  }).join('');
-  let ticks = '';
-  for (let m = 720; m < close; m += 120) ticks += `<span class="tl-tick" style="right:${pct(m)}%">${faTime(m)}</span>`;
-  const days = [0, 1, 2, 3].map((i) => {
-    const iso = addDays(todayISO(), i), d = dateOf(iso);
-    return `<span class="day ${i === 0 ? 'today active' : ''}"><div class="wd">${F_WD.format(d)}</div><div class="dn">${F_DAY.format(d)}</div><div class="mn">${F_MON.format(d)}</div></span>`;
-  }).join('');
-  return `
-    <div class="demo">
-      <div class="demo-phone" aria-hidden="true">
-        <div class="demo-notch"></div>
-        <div class="demo-screen"><div class="demo-inner">
-          <div class="demo-top">
-            <span class="brand-icon">${icon('scissors')}</span><b>پیرایش نمونه</b>
-            <span class="demo-top-icons">${icon('pin')}${icon('instagram')}</span>
-          </div>
-          <div class="demo-body">
-            <section class="hero"><h1>پیرایش نمونه</h1></section>
-            <div class="section-title"><span>انتخاب روز</span></div>
-            <div class="date-strip">${days}</div>
-            <div class="card">
-              <div class="section-title" style="margin-top:0"><span>امروز</span><span class="muted">ساعت کاری ${faTime(open)} تا ${faTime(close)}</span></div>
-              <div class="tl-status free"><i></i><span>الان خالی است تا ساعت ${faTime(free[0][2])}</span></div>
-              <div class="tl has-now">
-                <span class="tl-now" style="right:${pct(now)}%">الان ${faTime(now)}</span>
-                <span class="tl-now-line" style="right:${pct(now)}%"></span>
-                <div class="tl-bar">${segHTML}</div>
-                <div class="tl-ticks">
-                  <span class="tl-end start">${faTime(open)}<small>شروع کار</small></span>${ticks}
-                  <span class="tl-end finish">${faTime(close)}<small>پایان کار</small></span>
-                </div>
-              </div>
-              <div class="section-title"><span>زمان‌های خالی</span></div>
-              <div class="slots">${free.map(([, s, e]) => `<div class="slot"><div class="range">${faTime(s)} <span class="muted">تا</span> ${faTime(e)}</div><div class="len">${fmtDur(e - s)} زمان آزاد</div></div>`).join('')}</div>
-            </div>
-            <div class="card call-card" style="margin-top:12px">
-              <div><h3>رزرو نوبت با استاد رضا</h3><p>برای رزرو یکی از زمان‌های خالی تماس بگیرید</p></div>
-              <span class="btn btn-lg">${icon('phone')}<span class="ltr">${fa('0912 000 0000')}</span></span>
-            </div>
-          </div>
-        </div></div>
-      </div>
-      <p class="demo-caption">${icon('eye')}نمونهٔ صفحه‌ای که مشتری‌های شما می‌بینند</p>
-    </div>`;
-}
-
 function renderJoin(from) {
   renderTopbar('join');
   const features = [
@@ -855,8 +794,6 @@ function renderJoin(from) {
         </div>
         <div class="join-count hidden" id="joinCount"></div>
       </section>
-
-      ${demoPhoneHTML()}
 
       <section class="join-features">
         ${features.map(([ic, t, d]) => `<div class="feature"><span class="feature-icon">${icon(ic)}</span><div><b>${t}</b><p>${d}</p></div></div>`).join('')}
@@ -1185,6 +1122,8 @@ function leadsHTML() {
       ${planOf(l.plan) ? `<div class="lead-plan">${icon('calendar')}<span>پلن ${planOf(l.plan).title}، ${toman(planOf(l.plan).price)} تومان</span></div>` : ''}
       ${l.receiptId ? `<button class="btn lead-receipt" data-action="view-receipt" data-id="${esc(l.receiptId)}">${icon('eye')}مشاهدهٔ رسید پرداخت${l.receipts > 1 ? ` <small>(${fa(l.receipts)} رسید، آخرین)</small>` : ''}</button>` : ''}
       ${l.note ? `<p class="lead-note">${esc(l.note)}</p>` : ''}
+      ${l.shopId ? `<a class="btn lead-receipt" href="#/s/${encodeURIComponent(l.shopId)}/admin">${icon('store')}باز کردن آرایشگاه ساخته‌شده</a>`
+        : `<button class="btn ${l.status === 'paid' ? 'btn-primary' : ''} lead-receipt" data-action="lead-shop" data-id="${esc(l.id)}">${icon('plus')}ساخت آرایشگاه با این اطلاعات</button>`}
       ${l.sourceName ? `<div class="muted" style="font-size:12.5px;margin-bottom:8px">از صفحهٔ «${esc(l.sourceName)}»</div>` : ''}
       <div class="lead-foot">
         <div class="pick-chips">${LEAD_STATUS.map(([k, t]) => `<button class="pick mini ${l.status === k ? 'active' : ''}" data-action="lead-status" data-id="${esc(l.id)}" data-status="${k}">${t}</button>`).join('')}</div>
@@ -2102,6 +2041,14 @@ document.addEventListener('click', async (ev) => {
           </div>`);
       } catch (err) { toast(err.message, true); }
       return;
+    }
+    case 'lead-shop': {
+      const l = (state.leads || []).find((x) => x.id === el.dataset.id);
+      if (!l) return;
+      return openShopModal(null, {
+        leadId: l.id, person: l.name, plan: l.plan, name: l.shopName || '', location: l.city || '',
+        ownerUsername: /^09\d{9}$/.test(l.phone) ? l.phone : '',
+      });
     }
     case 'renew':
       return openRenewModal();
