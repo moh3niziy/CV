@@ -521,14 +521,16 @@ function renderHome() {
       ${shops.length > 3 ? `<div class="search">${icon('search')}<input class="input" id="shopSearch" placeholder="جستجوی نام یا محله…" autocomplete="off"></div>` : ''}
       <div class="shop-list" id="shopList">
         ${shops.map((x) => `
-          <div class="shop-card ${x.active === false ? 'inactive' : ''}" data-action="open-shop" data-id="${esc(x.id)}" data-q="${esc((x.name + ' ' + x.location).toLowerCase())}" role="link" tabindex="0">
+          <div class="shop-card ${x.active === false || x.sub?.state === 'expired' ? 'inactive' : ''}" data-action="open-shop" data-id="${esc(x.id)}" data-q="${esc((x.name + ' ' + x.location).toLowerCase())}" role="link" tabindex="0">
             <span class="shop-icon">${icon('store')}</span>
             <div class="info">
               <div class="name">${esc(x.name)}${x.active === false ? ' <span class="badge">غیرفعال</span>' : ''}</div>
               <div class="sub">${icon('pin')}<span>${/^https?:\/\//i.test(x.location) ? 'لوکیشن روی نقشه' : esc(fa(x.location || '—'))}</span></div>
               <div class="sub">${icon('users')}<span>${x.barbers ? `${fa(x.barbers)} آرایشگر` : 'بدون آرایشگر'}</span></div>
+              ${isSuper() && x.sub ? `<div class="sub">${icon('calendar')}${subBadgeHTML(x.sub)}</div>` : ''}
             </div>
             ${isSuper() ? `<div class="shop-actions">
+              <button class="btn icon-btn sm" data-action="sub-shop" data-id="${esc(x.id)}" title="اشتراک">${icon('calendar')}</button>
               <button class="btn icon-btn sm" data-action="edit-shop" data-id="${esc(x.id)}" title="ویرایش">${icon('edit')}</button>
               <button class="btn icon-btn sm ${x.active === false ? 'btn-on' : 'btn-warn'}" data-action="toggle-shop" data-id="${esc(x.id)}" title="${x.active === false ? 'فعال کردن' : 'غیرفعال کردن'}">${icon('power')}</button>
               <button class="btn icon-btn sm btn-danger" data-action="del-shop" data-id="${esc(x.id)}" title="حذف">${icon('trash')}</button>
@@ -796,6 +798,140 @@ function expiredHTML(support) {
     </div>
     ${supportHTML(support)}
   </div></div>`;
+}
+
+/* ================================================================ subscription management (site admin) */
+const J_MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+const F_JNUM = new Intl.DateTimeFormat('en-US-u-ca-persian-nu-latn', { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'UTC' });
+
+function toJalali(iso) {
+  const p = Object.fromEntries(F_JNUM.formatToParts(new Date(iso + 'T00:00:00Z')).map((x) => [x.type, x.value]));
+  return { y: Number(p.year), m: Number(p.month), d: Number(p.day) };
+}
+// تاریخ شمسی به میلادی؛ تخمین اولیه و سپس تصحیح روزبه‌روز با Intl. تاریخ نامعتبر (مثلاً ۳۱ مهر) null می‌دهد
+function fromJalali(y, m, d) {
+  let t = Date.UTC(y + 621, 2, 21) + ((m <= 6 ? (m - 1) * 31 : 186 + (m - 7) * 30) + d - 1) * 864e5;
+  for (let i = 0; i < 8; i++) {
+    const iso = new Date(t).toISOString().slice(0, 10);
+    const j = toJalali(iso);
+    const cmp = (y - j.y) || (m - j.m) || (d - j.d);
+    if (!cmp) return iso;
+    t += Math.sign(cmp) * 864e5;
+  }
+  return null;
+}
+const daysBetween = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5);
+
+function subBadgeHTML(sub) {
+  if (!sub?.expiresAt) return '<span class="badge sb-ok">بدون محدودیت</span>';
+  if (sub.state === 'expired') return `<span class="badge sb-bad">منقضی از ${shortDate(sub.expiresAt)}</span>`;
+  if (sub.state === 'grace') return `<span class="badge sb-bad">مهلت تمدید · ${sub.graceLeft ? `${fa(sub.graceLeft)} روز` : 'امروز'}</span>`;
+  const label = sub.daysLeft === 0 ? 'امروز تمام می‌شود' : `${fa(sub.daysLeft)} روز مانده`;
+  return `<span class="badge ${sub.state === 'warning' ? 'sb-warn' : 'sb-ok'}">${label}</span>`;
+}
+
+function openSubModal(shop) {
+  if (!shop) return;
+  const sub = shop.sub || {};
+  const today = todayISO();
+  // تمدید از پایان اشتراک فعلی؛ اگر تمام شده باشد از امروز
+  const base = sub.expiresAt && sub.expiresAt >= today ? sub.expiresAt : today;
+  const presets = [[30, '۱ ماه'], [90, '۳ ماه'], [180, '۶ ماه'], [365, '۱ سال']];
+  const cur = toJalali(sub.expiresAt || base);
+  const years = []; for (let y = toJalali(today).y - 1; y <= toJalali(today).y + 5; y++) years.push(y);
+
+  openModal(`
+    <div class="modal sm" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>اشتراک «${esc(shop.name)}»</h2>
+        <button class="btn btn-ghost icon-btn sm" data-action="close" aria-label="بستن">${icon('x')}</button>
+      </div>
+      <div class="modal-body" id="subForm">
+        <div class="summary">
+          <span>وضعیت: ${subBadgeHTML(sub)}</span>
+          <span class="muted" style="font-size:13px">${sub.expiresAt ? `پایان: ${shortDate(sub.expiresAt)}` : ''}</span>
+        </div>
+
+        <div class="field">
+          <label>تمدید <span class="muted" style="font-weight:400">— از ${base === today ? 'امروز' : `پایان اشتراک فعلی (${shortDate(base)})`}</span></label>
+          <div class="pick-chips">
+            ${presets.map(([n, t]) => `<button type="button" class="pick" data-days="${n}">${icon('plus')}${t}</button>`).join('')}
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="subDays">یا تعداد روز دلخواه</label>
+          <div class="row"><input class="input ltr-input" id="subDays" inputmode="numeric" maxlength="5" placeholder="مثلاً ۴۵" style="max-width:140px"><span class="muted">روز</span></div>
+        </div>
+
+        <div class="field">
+          <label>یا اشتراک تا تاریخ</label>
+          <div class="row jdate">
+            <select class="input" id="subD">${Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}" ${i + 1 === cur.d ? 'selected' : ''}>${fa(i + 1)}</option>`).join('')}</select>
+            <select class="input" id="subM">${J_MONTHS.map((n, i) => `<option value="${i + 1}" ${i + 1 === cur.m ? 'selected' : ''}>${n}</option>`).join('')}</select>
+            <select class="input" id="subY">${years.map((y) => `<option value="${y}" ${y === cur.y ? 'selected' : ''}>${fa(y)}</option>`).join('')}</select>
+          </div>
+        </div>
+
+        <div id="subPreview"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-primary btn-lg" id="subSave">${icon('check')}ذخیرهٔ اشتراک</button>
+        <button class="btn btn-lg" data-action="close">انصراف</button>
+      </div>
+    </div>`);
+
+  const form = $('#subForm');
+  let target = sub.expiresAt || null;
+
+  const setSelects = (iso) => { const j = toJalali(iso); $('#subY').value = String(j.y); $('#subM').value = String(j.m); $('#subD').value = String(j.d); };
+  const update = () => {
+    $$('[data-days]', form).forEach((b) => b.classList.toggle('active', !!target && addDays(base, Number(b.dataset.days)) === target && !$('#subDays').value));
+    let html;
+    if (!target) html = `<div class="alert alert-busy">${icon('alert')}<span>تاریخ انتخاب‌شده معتبر نیست.</span></div>`;
+    else {
+      const left = daysBetween(today, target);
+      const note = left < 0 ? 'این تاریخ گذشته است؛ آرایشگاه بلافاصله در مهلت تمدید یا منقضی قرار می‌گیرد.'
+        : left === 0 ? 'اشتراک امروز تمام می‌شود.' : `${fa(left)} روز از امروز`;
+      html = `<div class="summary"><span>اشتراک تا <b>${shortDate(target)}</b></span><span class="muted" style="font-size:13px">${note}</span></div>`;
+    }
+    $('#subPreview').innerHTML = html;
+    $('#subSave').disabled = !target || target === sub.expiresAt;
+  };
+
+  form.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-days]');
+    if (!b) return;
+    $('#subDays').value = '';
+    target = addDays(base, Number(b.dataset.days));
+    setSelects(target);
+    update();
+  });
+  $('#subDays').addEventListener('input', () => {
+    const n = parseInt(toEn($('#subDays').value), 10);
+    if (n > 0 && n <= 3650) { target = addDays(base, n); setSelects(target); }
+    update();
+  });
+  ['#subD', '#subM', '#subY'].forEach((sel) => $(sel).addEventListener('change', () => {
+    $('#subDays').value = '';
+    target = fromJalali(Number($('#subY').value), Number($('#subM').value), Number($('#subD').value));
+    update();
+  }));
+
+  $('#subSave').addEventListener('click', async () => {
+    if (!target) return;
+    $('#subSave').disabled = true;
+    try {
+      await api('PUT', `/admin/shops/${encodeURIComponent(shop.id)}/subscription`, { expiresAt: target });
+      closeModal();
+      toast(`اشتراک تا ${shortDate(target)} ثبت شد`);
+      render();
+    } catch (err) {
+      toast(err.message, true);
+      $('#subSave').disabled = false;
+    }
+  });
+  update();
 }
 
 /* ================================================================ admin view */
@@ -1378,6 +1514,8 @@ document.addEventListener('click', async (ev) => {
       return openShopModal(null);
     case 'edit-shop':
       return openShopModal(state.shops.find((x) => x.id === el.dataset.id));
+    case 'sub-shop':
+      return openSubModal(state.shops.find((x) => x.id === el.dataset.id));
     case 'toggle-shop': {
       const sh = state.shops.find((x) => x.id === el.dataset.id);
       if (!sh) return;
