@@ -140,7 +140,7 @@ async function api(method, path, body) {
       if (state.shopId) location.hash = `#/s/${encodeURIComponent(state.shopId)}`;
     }
     throw Object.assign(new AppError(json.error || 'خطایی رخ داد'), {
-      status: res.status, expired: !!json.expired, readonly: !!json.readonly, support: json.support,
+      status: res.status, expired: !!json.expired, readonly: !!json.readonly, support: json.support, shopName: json.shopName,
     });
   }
   return json;
@@ -789,13 +789,13 @@ function subBannerHTML() {
   return '';
 }
 
-function expiredHTML(support) {
-  return `<div class="page"><div class="card expired-card">
-    <div class="empty" style="padding-bottom:8px">
-      <div class="big-icon">${icon('lock')}</div>
-      <h3>اشتراک این آرایشگاه به پایان رسیده است</h3>
-      <p>برای تهیه یا تمدید اشتراک با پشتیبانی تماس بگیرید:</p>
-    </div>
+// صفحهٔ آرایشگاه منقضی: یک پیام در وسط صفحه
+function expiredHTML(support, shopName) {
+  return `<div class="expired-wrap"><div class="card expired-card">
+    <div class="big-icon">${icon('lock')}</div>
+    ${shopName ? `<div class="expired-shop">${esc(shopName)}</div>` : ''}
+    <h2>اشتراک این آرایشگاه به پایان رسیده است</h2>
+    <p>نوبت‌دهی آنلاین فعلاً در دسترس نیست. مدیریت آرایشگاه می‌تواند برای تمدید اشتراک و فعال‌سازی دوباره با پشتیبانی در ارتباط باشد:</p>
     ${supportHTML(support)}
   </div></div>`;
 }
@@ -1724,8 +1724,9 @@ async function render(reload = true) {
       if (state.pendingLogin) { state.pendingLogin = false; openLogin(`#/s/${encodeURIComponent(r.shopId)}/admin`); }
     }
   } catch (err) {
+    if (err.expired && err.shopName) state.shop = { ...(state.shop || {}), name: err.shopName };
     renderTopbar(r.view);
-    if (err.expired) { $('#app').innerHTML = expiredHTML(err.support); return; }
+    if (err.expired) { $('#app').innerHTML = expiredHTML(err.support, err.shopName); return; }
     const back = err.status === 404 || err.status === 403 ? '' : '<button class="btn btn-primary" onclick="render()">تلاش دوباره</button>';
     $('#app').innerHTML = `<div class="page"><div class="card">${emptyHTML(err.status === 403 ? 'lock' : 'alert', err.status === 404 ? 'آرایشگاه پیدا نشد' : err.status === 403 ? 'دسترسی ممکن نیست' : 'خطا در بارگذاری', esc(err.message), back)}</div></div>`;
   }

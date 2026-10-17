@@ -32,7 +32,7 @@ const json = (obj, status = 200) =>
 class HttpError extends Error {
   constructor(status, message, extra) { super(message); this.status = status; this.extra = extra; }
 }
-const expiredError = () => new HttpError(403, 'اشتراک این آرایشگاه به پایان رسیده است', { expired: true, support: SUPPORT });
+const expiredError = (shopName) => new HttpError(403, 'اشتراک این آرایشگاه به پایان رسیده است', { expired: true, support: SUPPORT, shopName });
 
 const toEn = (v) =>
   String(v ?? '')
@@ -340,10 +340,9 @@ async function handleApi(request, env, path) {
     }
     if (method === 'GET' && parts.length === 2) {
       const shop = await getShop(db, id);
-      if (auth?.r !== 'super') {
-        if (shop.shop.sub.state === 'expired') throw expiredError();
-        if (!shop.shop.active) throw new HttpError(403, 'این آرایشگاه در حال حاضر غیرفعال است');
-      }
+      // صفحهٔ مشتری آرایشگاه منقضی برای همه (حتی مدیر سایت) پیام پایان اشتراک را نشان می‌دهد؛ پنل مدیریت جداست
+      if (shop.shop.sub.state === 'expired') throw expiredError(shop.shop.name);
+      if (!shop.shop.active && auth?.r !== 'super') throw new HttpError(403, 'این آرایشگاه در حال حاضر غیرفعال است');
       return json(publicView(shop));
     }
 
@@ -353,7 +352,7 @@ async function handleApi(request, env, path) {
       const u = toEn(username).toLowerCase();
       const { shop, data } = await getShop(db, id);
       if (isSuperLogin(env, username, password)) return json(await superToken());
-      if (shop.sub.state === 'expired') throw expiredError();
+      if (shop.sub.state === 'expired') throw expiredError(shop.name);
       if (!shop.active) throw new HttpError(403, 'این آرایشگاه غیرفعال شده است');
       const acc = await db.prepare('SELECT username, pass, role, barber_id FROM accounts WHERE shop_id = ? AND username = ?').bind(id, u).first();
       if (!acc || !(await checkPassword(toEn(password), acc.pass))) throw new HttpError(401, 'نام کاربری یا رمز عبور اشتباه است');
