@@ -25,6 +25,13 @@ const SUPPORT = { phone: '09399515814', telegram: 'moh3nIziy' }; // راه تم�
 // پرداخت فقط کارت‌به‌کارت است؛ کاربر بعد از واریز تصویر رسید را داخل سایت می‌فرستد
 const PAYMENT = { card: '6063731203923199', holder: 'محسن ایزی' };
 const PLAN_MONTHS = [1, 3, 6];
+// تعرفه‌های پیش‌فرض (تومان)؛ مدیر سایت از پنل تغییرشان می‌دهد و در جدول meta ذخیره می‌شوند.
+// compare = قیمت قبل از تخفیف (۰ یعنی بدون تخفیف)
+const DEFAULT_PLANS = [
+  { months: 1, price: 1000000, compare: 0 },
+  { months: 3, price: 2000000, compare: 3000000 },
+  { months: 6, price: 3000000, compare: 6000000 },
+];
 const MAX_RECEIPT = 900 * 1024;   // حداکثر حجم تصویر رسید (data URL، بعد از کوچک‌شدن در مرورگر)
 const MAX_RECEIPTS_PER_LEAD = 5;
 const LEAD_STATUSES = ['new', 'contacted', 'paid', 'done', 'rejected'];
@@ -109,7 +116,8 @@ async function migrate(db) {
     ['leads', "shop_name TEXT NOT NULL DEFAULT ''"], ['leads', "city TEXT NOT NULL DEFAULT ''"],
     ['leads', 'plan INTEGER NOT NULL DEFAULT 0'], ['leads', "token TEXT NOT NULL DEFAULT ''"],
     ['receipts', "status TEXT NOT NULL DEFAULT 'new'"], ['leads', "shop_id TEXT NOT NULL DEFAULT ''"],
-    ['shops', "owner_name TEXT NOT NULL DEFAULT ''"], ['shops', "owner_phone TEXT NOT NULL DEFAULT ''"]]) {
+    ['shops', "owner_name TEXT NOT NULL DEFAULT ''"], ['shops', "owner_phone TEXT NOT NULL DEFAULT ''"],
+    ['leads', 'amount INTEGER NOT NULL DEFAULT 0'], ['receipts', 'amount INTEGER NOT NULL DEFAULT 0']]) {
     try {
       await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col}`).run();
     } catch (err) {
@@ -295,6 +303,27 @@ function cleanReceipt(v) {
   return image;
 }
 
+async function getPlans(db) {
+  const row = await db.prepare("SELECT value FROM meta WHERE key = 'plans'").first();
+  let saved = [];
+  try { saved = row ? JSON.parse(row.value) : []; } catch { saved = []; }
+  return DEFAULT_PLANS.map((d) => ({ ...d, ...(saved.find((x) => x.months === d.months) || {}) }));
+}
+const planPrice = (plans, months) => plans.find((p) => p.months === Number(months))?.price || 0;
+
+function cleanPlans(list) {
+  if (!Array.isArray(list)) throw new HttpError(400, 'تعرفه‌ها نامعتبر است');
+  return DEFAULT_PLANS.map((d) => {
+    const x = list.find((p) => Number(p?.months) === d.months);
+    if (!x) throw new HttpError(400, 'قیمت همهٔ پلن‌ها را وارد کنید');
+    const price = Number(toEn(x.price)), compare = Number(toEn(x.compare || 0));
+    if (!Number.isInteger(price) || price < 10000 || price > 1e9) throw new HttpError(400, 'قیمت پلن نامعتبر است');
+    if (!Number.isInteger(compare) || compare < 0 || compare > 1e9) throw new HttpError(400, 'قیمت قبل از تخفیف نامعتبر است');
+    if (compare && compare <= price) throw new HttpError(400, 'قیمت قبل از تخفیف باید از قیمت فعلی بیشتر باشد');
+    return { months: d.months, price, compare };
+  });
+}
+
 // آخرین رسید تمدیدی که هنوز بررسی نشده (برای نمایش «در انتظار تأیید» در پنل مالک)
 async function pendingRenewal(db, shopId) {
   return (await db.prepare(`SELECT plan, created_at AS createdAt FROM receipts
@@ -303,7 +332,7 @@ async function pendingRenewal(db, shopId) {
 
 // وضعیت سفارش برای خود کاربر (بدون اطلاعات داخلی مثل IP)
 async function leadView(db, token) {
-  const row = await db.prepare(`SELECT l.id, l.name, l.phone, l.shop_name AS shopName, l.city, l.plan, l.status,
+  const row = await db.prepare(`SELECT l.id, l.name, l.phone, l.shop_name AS shopName, l.city, l.plan, l.amount, l.status,
     (SELECT COUNT(*) FROM receipts r WHERE r.lead_id = l.id) AS receipts,
     (SELECT MAX(created_at) FROM receipts r WHERE r.lead_id = l.id) AS receiptAt
     FROM leads l WHERE l.token = ?`).bind(token).first();
@@ -436,6 +465,15 @@ async function handleApi(request, env, path) {
 
   // ---- راه‌های تماس با پشتیبانی (برای صفحهٔ درخواست ساخت سایت)
   if (method === 'GET' && path === '/api/support') return json({ support: SUPPORT, payment: PAYMENT });
+  if (method === 'GET' && path === '/api/plans') return json({ plans: await getPlans(db) });
+  if (method === 'PUT' && path === '/api/admin/plans') {
+    requireAuth(auth);
+    if (auth.r !== 'super') throw new HttpError(403, 'فقط مدیر سایت می‌تواند تعرفه‌ها را تغییر دهد');
+    const plans = cleanPlans((await readJson(request)).plans);
+    await db.prepare("INSERT INTO meta (key, value) VALUES ('plans', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .bind(JSON.stringify(plans)).run();
+    return json({ plans });
+  }
 
   // ---- درخواست ساخت سایت از صفحهٔ «تو هم می‌خواهی؟» (عمومی)
   // هر شماره تلفن یک سفارش دارد؛ توکن سفارش در مرورگر کاربر می‌ماند تا بعداً پرداخت و ارسال رسید را ادامه دهد
@@ -461,12 +499,13 @@ async function handleApi(request, env, path) {
     // اگر این شماره قبلاً سفارش داده، همان سفارش به‌روز می‌شود (نه یک سفارش تکراری)
     const old = await db.prepare('SELECT id, token FROM leads WHERE phone = ? ORDER BY created_at DESC LIMIT 1').bind(phone).first();
     const token = old?.token || randomHex(16);
+    const amount = planPrice(await getPlans(db), plan);
     if (old) {
-      await db.prepare('UPDATE leads SET name = ?, shop_name = ?, city = ?, note = ?, plan = ?, token = ? WHERE id = ?')
-        .bind(name, shopName, city, note, plan, token, old.id).run();
+      await db.prepare('UPDATE leads SET name = ?, shop_name = ?, city = ?, note = ?, plan = ?, amount = ?, token = ? WHERE id = ?')
+        .bind(name, shopName, city, note, plan, amount, token, old.id).run();
     } else {
-      await db.prepare(`INSERT INTO leads (id, name, phone, shop_name, city, note, plan, token, source_shop, status, ip, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`).bind(newId(), name, phone, shopName, city, note, plan, token, source, ip, Date.now()).run();
+      await db.prepare(`INSERT INTO leads (id, name, phone, shop_name, city, note, plan, amount, token, source_shop, status, ip, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`).bind(newId(), name, phone, shopName, city, note, plan, amount, token, source, ip, Date.now()).run();
     }
     return json({ token, order: await leadView(db, token), support: SUPPORT, payment: PAYMENT });
   }
@@ -481,7 +520,7 @@ async function handleApi(request, env, path) {
     if (method === 'PUT' && parts.length === 2) {
       const plan = Number((await readJson(request)).plan);
       if (!PLAN_MONTHS.includes(plan)) throw new HttpError(400, 'یک پلن انتخاب کنید');
-      await db.prepare('UPDATE leads SET plan = ? WHERE id = ?').bind(plan, order.id).run();
+      await db.prepare('UPDATE leads SET plan = ?, amount = ? WHERE id = ?').bind(plan, planPrice(await getPlans(db), plan), order.id).run();
       return json({ order: await leadView(db, token) });
     }
     // ارسال تصویر رسید پرداخت
@@ -489,8 +528,8 @@ async function handleApi(request, env, path) {
       const image = cleanReceipt((await readJson(request)).image);
       if (order.receipts >= MAX_RECEIPTS_PER_LEAD) throw new HttpError(429, 'تعداد رسیدهای ارسالی زیاد است؛ با پشتیبانی تماس بگیرید');
       await db.batch([
-        db.prepare('INSERT INTO receipts (id, lead_id, shop_id, plan, image, created_at) VALUES (?, ?, NULL, ?, ?, ?)')
-          .bind(newId(), order.id, order.plan || 0, image, Date.now()),
+        db.prepare('INSERT INTO receipts (id, lead_id, shop_id, plan, amount, image, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?)')
+          .bind(newId(), order.id, order.plan || 0, order.amount || 0, image, Date.now()),
         db.prepare("UPDATE leads SET status = 'paid' WHERE id = ? AND status IN ('new', 'contacted')").bind(order.id),
       ]);
       return json({ order: await leadView(db, token) });
@@ -504,7 +543,7 @@ async function handleApi(request, env, path) {
     if (auth.r !== 'super') throw new HttpError(403, 'به این بخش دسترسی ندارید');
     const rid = parts[2];
     if (method === 'GET' && !rid) {
-      const { results } = await db.prepare(`SELECT r.id, r.shop_id AS shopId, r.plan, r.status, r.created_at AS createdAt,
+      const { results } = await db.prepare(`SELECT r.id, r.shop_id AS shopId, r.plan, r.amount, r.status, r.created_at AS createdAt,
         s.name AS shopName, s.expires_at AS expiresAt FROM receipts r LEFT JOIN shops s ON s.id = r.shop_id
         WHERE r.shop_id IS NOT NULL ORDER BY r.created_at DESC LIMIT 300`).all();
       return json({ renewals: results.map(({ expiresAt, ...r }) => ({ ...r, sub: expiresAt != null ? subStatus(expiresAt) : null })) });
@@ -549,7 +588,7 @@ async function handleApi(request, env, path) {
     if (auth.r !== 'super') throw new HttpError(403, 'به این بخش دسترسی ندارید');
     const leadId = parts[2];
     if (method === 'GET' && !leadId) {
-      const { results } = await db.prepare(`SELECT l.id, l.name, l.phone, l.shop_name AS shopName, l.city, l.note, l.plan, l.status, l.created_at AS createdAt,
+      const { results } = await db.prepare(`SELECT l.id, l.name, l.phone, l.shop_name AS shopName, l.city, l.note, l.plan, l.amount, l.status, l.created_at AS createdAt,
         (SELECT r.id FROM receipts r WHERE r.lead_id = l.id ORDER BY r.created_at DESC LIMIT 1) AS receiptId,
         (SELECT COUNT(*) FROM receipts r WHERE r.lead_id = l.id) AS receipts,
         l.source_shop AS sourceShop, s.name AS sourceName,
@@ -603,7 +642,8 @@ async function handleApi(request, env, path) {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`)
         .bind(shop.id, shop.name, shop.location, shop.telegram, shop.instagram, shop.ownerName, shop.ownerPhone, shop.expiresAt, JSON.stringify(EMPTY), Date.now()),
       ...ownerOps,
-      ...(lead ? [db.prepare("UPDATE leads SET status = 'done', shop_id = ?, plan = ? WHERE id = ?").bind(shop.id, plan || lead.plan, lead.id)] : []),
+      ...(lead ? [db.prepare("UPDATE leads SET status = 'done', shop_id = ?, plan = ?, amount = CASE WHEN plan = ? THEN amount ELSE ? END WHERE id = ?")
+        .bind(shop.id, plan || lead.plan, plan || lead.plan, planPrice(await getPlans(db), plan || lead.plan), lead.id)] : []),
     ]);
     return json(shop);
   }
@@ -735,8 +775,8 @@ async function handleApi(request, env, path) {
     const image = cleanReceipt(body.image);
     const pending = await db.prepare("SELECT COUNT(*) AS n FROM receipts WHERE shop_id = ? AND status = 'new'").bind(id).first();
     if (pending.n >= MAX_RECEIPTS_PER_LEAD) throw new HttpError(429, 'تعداد رسیدهای ارسالی زیاد است؛ با پشتیبانی تماس بگیرید');
-    await db.prepare("INSERT INTO receipts (id, lead_id, shop_id, plan, image, status, created_at) VALUES (?, NULL, ?, ?, ?, 'new', ?)")
-      .bind(newId(), id, plan, image, Date.now()).run();
+    await db.prepare("INSERT INTO receipts (id, lead_id, shop_id, plan, amount, image, status, created_at) VALUES (?, NULL, ?, ?, ?, ?, 'new', ?)")
+      .bind(newId(), id, plan, planPrice(await getPlans(db), plan), image, Date.now()).run();
     return json({ renewal: await pendingRenewal(db, id) });
   }
 

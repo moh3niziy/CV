@@ -507,6 +507,7 @@ function renderHome() {
   renderTopbar('home');
   const shops = state.shops;
   const addBtn = isSuper() ? `<button class="btn btn-primary" data-action="new-shop">${icon('plus')}افزودن آرایشگاه</button>` : '';
+  const plansBtn = isSuper() ? `<button class="btn" data-action="edit-plans">${icon('edit')}ویرایش تعرفه‌ها</button>` : '';
 
   let body;
   if (!shops.length) {
@@ -560,7 +561,7 @@ function renderHome() {
           <button class="${tab === 'renewals' ? 'active' : ''}" data-action="home-tab" data-tab="renewals">${icon('calendar')}تمدیدها${newRenewals ? ` <span class="count">${fa(newRenewals)}</span>` : ''}</button>
         </div>` : ''}
       </div>
-      ${leadsTab ? leadsHTML() : tab === 'renewals' ? renewalsHTML() : `${shops.length && addBtn ? `<div style="margin-top:16px">${addBtn}</div>` : ''}<div style="margin-top:20px">${body}</div>`}
+      ${leadsTab ? leadsHTML() : tab === 'renewals' ? renewalsHTML() : `${isSuper() ? `<div class="home-actions">${shops.length ? addBtn : ''}${plansBtn}</div>` : ''}<div style="margin-top:20px">${body}</div>`}
     </div>`;
 
   const search = $('#shopSearch');
@@ -764,15 +765,26 @@ function renderUser() {
 }
 
 /* ================================================================ promo + join page */
-// تعرفه‌ها (تومان). صرفه‌جویی نسبت به پرداخت ماهانه حساب می‌شود
-const MONTHLY = 1000000;
-const PLANS = [
-  { months: 1, price: 1000000, title: 'ماهانه' },
-  { months: 3, price: 2000000, title: 'سه‌ماهه' },
-  { months: 6, price: 3000000, title: 'شش‌ماهه', best: true },
-];
+// تعرفه‌ها (تومان) از سرور خوانده می‌شوند و مدیر سایت از پنل تغییرشان می‌دهد.
+// compare = قیمت قبل از تخفیف؛ اگر بیشتر از قیمت باشد، پلن به‌شکل «آفر» با قیمت خط‌خورده نمایش داده می‌شود
+const PLAN_TITLES = { 1: 'ماهانه', 3: 'سه‌ماهه', 6: 'شش‌ماهه' };
+let PLANS = [
+  { months: 1, price: 1000000, compare: 0 },
+  { months: 3, price: 2000000, compare: 3000000 },
+  { months: 6, price: 3000000, compare: 6000000 },
+].map((p) => ({ ...p, title: PLAN_TITLES[p.months] }));
+let plansLoaded = false;
+function setPlans(list) {
+  PLANS = list.map((p) => ({ months: p.months, price: p.price, compare: p.compare || 0, title: PLAN_TITLES[p.months] }));
+}
+async function ensurePlans() {
+  if (plansLoaded) return;
+  try { setPlans((await api('GET', '/plans')).plans); plansLoaded = true; } catch { /* پیش‌فرض‌ها می‌مانند */ }
+}
 const planOf = (months) => PLANS.find((p) => p.months === Number(months)) || null;
-const toman = (n) => n >= 1e6 && n % 1e6 === 0 ? `${fa(n / 1e6)} میلیون` : `${fa(Math.round(n / 1e3).toLocaleString('en'))} هزار`;
+const planOff = (p) => p.compare > p.price ? Math.round((1 - p.price / p.compare) * 100) : 0;
+const toman = (n) => n >= 1e6 && n % 1e5 === 0 ? `${fa(String(n / 1e6).replace('.', '٫'))} میلیون`
+  : `${fa(Math.round(n / 1e3).toLocaleString('en'))} هزار`;
 // لینک تبلیغاتی پایین صفحهٔ مشتری همهٔ آرایشگاه‌ها
 function promoHTML() {
   if (!state.shop) return '';
@@ -802,15 +814,18 @@ function renderJoin(from) {
     ['دامنهٔ اختصاصی هزینهٔ جدا دارد؟', 'نه. هزینهٔ خرید دامنهٔ اختصاصی با ماست.'],
     ['اگر اشتراک تمام شود چه می‌شود؟', `بعد از پایان اشتراک، ${fa(7)} روز مهلت دارید تا آن را تمدید کنید.`],
   ];
+  // «به‌صرفه‌ترین» = پلنی که بیشترین درصد تخفیف را دارد
+  const best = PLANS.reduce((b, p) => (planOff(p) >= planOff(b || p) && planOff(p) > 0 ? p : b), null);
   const planHTML = (p) => {
-    const save = MONTHLY * p.months - p.price;
-    return `<div class="plan ${p.best ? 'best' : ''}">
-      ${p.best ? `<span class="plan-flag">${icon('star')}به‌صرفه‌ترین</span>` : ''}
+    const off = planOff(p), isBest = p === best;
+    return `<div class="plan ${isBest ? 'best' : ''} ${off ? 'offer' : ''}">
+      ${isBest ? `<span class="plan-flag">${icon('star')}به‌صرفه‌ترین</span>` : ''}
       <div class="plan-title">${p.title}</div>
-      <div class="plan-price"><b>${toman(p.price)}</b> تومان</div>
-      <div class="plan-per">${p.months > 1 ? `ماهی ${toman(p.price / p.months)} تومان` : 'پرداخت ماه‌به‌ماه'}</div>
-      ${save > 0 ? `<div class="plan-save">${fa(Math.round(save / (MONTHLY * p.months) * 100))}٪ تخفیف، ${toman(save)} تومان صرفه‌جویی</div>` : '<div class="plan-save muted-save">بدون تعهد بلندمدت</div>'}
-      <button class="btn ${p.best ? 'btn-primary' : ''} plan-pick" data-action="join-plan" data-plan="${p.months}">انتخاب این پلن</button>
+      <div class="plan-price">${off ? `<span class="plan-was"><s>${toman(p.compare)}</s><span class="plan-off">${fa(off)}٪ تخفیف</span></span>` : ''}<b>${toman(p.price)}</b> تومان</div>
+      <div class="plan-per">${p.months > 1 ? `ماهی ${toman(Math.round(p.price / p.months / 1000) * 1000)} تومان` : 'پرداخت ماه‌به‌ماه'}</div>
+      ${off ? `<div class="plan-save">${toman(p.compare - p.price)} تومان صرفه‌جویی</div>`
+        : `<div class="plan-save muted-save">${p.months === 1 ? 'بدون تعهد بلندمدت' : 'بدون تخفیف'}</div>`}
+      <button class="btn ${isBest ? 'btn-primary' : ''} plan-pick" data-action="join-plan" data-plan="${p.months}">انتخاب این پلن</button>
     </div>`;
   };
 
@@ -997,7 +1012,7 @@ function showOrder({ order, support, payment }) {
     box.innerHTML = `${head('check', 'ok', 'رسید پرداخت شما دریافت شد',
       `پس از تأیید پرداخت، سایت «${esc(order.shopName)}» ظرف ${fa(2)} تا ${fa(5)} روز راه‌اندازی می‌شود. اگر تا ۲۴ ساعت آینده تماسی از ما نداشتید، لطفاً خودتان با ما تماس بگیرید:`)}
       ${supportHTML(support)}
-      <div class="order-summary"><span>${plan.title}</span><b>${toman(plan.price)} تومان</b></div>
+      <div class="order-summary"><span>${plan.title}</span><b>${toman(order.amount || plan.price)} تومان</b></div>
       <label class="btn btn-block order-again">${icon('plus')}ارسال رسید دیگر<input type="file" accept="image/*" id="receiptFile" hidden></label>
       ${restart}`;
     bindReceipt();
@@ -1007,19 +1022,24 @@ function showOrder({ order, support, payment }) {
   // مرحلهٔ پرداخت
   const card = payment?.card || '';
   box.innerHTML = `
-    ${head('check', 'ok', 'سفارش شما ثبت شد', `مرحلهٔ آخر: مبلغ پلن را کارت‌به‌کارت کنید و تصویر رسید را همین‌جا بفرستید.`)}
+    ${head('check', 'ok', 'سفارش شما ثبت شد', `سفارش سایت «${esc(order.shopName)}» با شمارهٔ <span class="ltr">${fa(esc(order.phone))}</span> ثبت شد. مرحلهٔ آخر: مبلغ پلن را کارت‌به‌کارت کنید و تصویر رسید را همین‌جا بفرستید.`)}
+    <ul class="trust">
+      <li>${icon('check')}<span>اطلاعات سفارش شما ذخیره شده است؛ اگر از سایت خارج شوید، با برگشتن به همین صفحه از همین‌جا ادامه می‌دهید.</span></li>
+      <li>${icon('user')}<span>واریز مستقیم به کارت <b>${esc(payment?.holder || '')}</b>، مدیر و پشتیبان همین سایت، انجام می‌شود.</span></li>
+      <li>${icon('clock')}<span>پس از تأیید رسید، سایت شما ظرف ${fa(2)} تا ${fa(5)} روز آماده می‌شود و هزینهٔ دامنهٔ اختصاصی هم با ماست.</span></li>
+      <li>${icon('phone')}<span>قبل یا بعد از پرداخت، هر سؤالی داشتید مستقیم با پشتیبانی تماس بگیرید؛ راه‌های تماس پایین همین صفحه است.</span></li>
+    </ul>
     <div class="field">
       <span class="label">پلن انتخابی</span>
       <div class="plan-chips">${PLANS.map((p) => `<button type="button" class="pick ${p.months === plan.months ? 'active' : ''}" data-action="order-plan" data-plan="${p.months}">${p.title} <small>${toman(p.price)}</small></button>`).join('')}</div>
     </div>
     <div class="pay-card">
-      <div class="pay-amount"><span>مبلغ قابل پرداخت</span><b>${toman(plan.price)} تومان</b></div>
+      <div class="pay-amount"><span>مبلغ قابل پرداخت</span><b>${toman(order.amount || plan.price)} تومان</b></div>
       <div class="pay-label">شماره کارت</div>
       <div class="pay-number ltr">${fa(card.replace(/(\d{4})(?=\d)/g, '$1 '))}</div>
       <div class="pay-holder">به نام <b>${esc(payment?.holder || '')}</b></div>
       <button class="btn btn-block" data-action="copy-card" data-card="${esc(card)}">${icon('check')}کپی شماره کارت</button>
     </div>
-    <div class="pay-note">${icon('clock')}<span>بعد از کپی شماره کارت می‌توانید از سایت خارج شوید و واریز کنید؛ وقتی برگردید، سفارشتان همین‌جا منتظر ارسال رسید است.</span></div>
     <div id="receiptArea">
       <label class="btn btn-primary btn-lg btn-block">${icon('plus')}ارسال تصویر رسید<input type="file" accept="image/*" id="receiptFile" hidden></label>
     </div>
@@ -1118,7 +1138,7 @@ function renewalsHTML() {
         <div><b>${esc(r.shopName || 'آرایشگاه حذف‌شده')}</b> <span class="badge lead-badge">${RENEW_STATUS[r.status] || ''}</span></div>
         <span class="muted" style="font-size:12.5px">${shortDate(isoOf(d))}، ساعت ${faTime(d.getHours() * 60 + d.getMinutes())}</span>
       </div>
-      ${p ? `<div class="lead-plan">${icon('calendar')}<span>پلن ${p.title}، ${toman(p.price)} تومان</span></div>` : ''}
+      ${p ? `<div class="lead-plan">${icon('calendar')}<span>پلن ${p.title}، ${toman(r.amount || p.price)} تومان</span></div>` : ''}
       ${r.sub ? `<div class="lead-plan">${icon('clock')}<span>اشتراک فعلی:</span> ${subBadgeHTML(r.sub)}</div>` : ''}
       <div class="renew-actions">
         <button class="btn" data-action="view-receipt" data-id="${esc(r.id)}">${icon('eye')}مشاهدهٔ رسید</button>
@@ -1150,7 +1170,7 @@ function leadsHTML() {
         <a class="btn" href="tel:${esc(l.phone)}">${icon('phone')}<span class="ltr">${fa(esc(l.phone))}</span></a>
         <a class="btn" href="sms:${esc(l.phone)}">${icon('chat')}پیامک</a>
       </div>
-      ${planOf(l.plan) ? `<div class="lead-plan lead-plan-main">${icon('calendar')}<span>پلن انتخابی: <b>${planOf(l.plan).title}</b>، ${toman(planOf(l.plan).price)} تومان</span></div>` : ''}
+      ${planOf(l.plan) ? `<div class="lead-plan lead-plan-main">${icon('calendar')}<span>پلن انتخابی: <b>${planOf(l.plan).title}</b>، ${toman(l.amount || planOf(l.plan).price)} تومان</span></div>` : ''}
       ${l.receiptId ? `<button class="btn lead-receipt" data-action="view-receipt" data-id="${esc(l.receiptId)}">${icon('eye')}مشاهدهٔ رسید پرداخت${l.receipts > 1 ? ` <small>(${fa(l.receipts)} رسید، آخرین)</small>` : ''}</button>` : ''}
       ${l.note ? `<p class="lead-note">${esc(l.note)}</p>` : ''}
       ${l.shopId ? `<a class="btn lead-receipt" href="#/s/${encodeURIComponent(l.shopId)}/admin">${icon('store')}باز کردن آرایشگاه ساخته‌شده</a>`
@@ -1245,6 +1265,63 @@ function subBannerHTML() {
   return `<div class="sub-banner busy">${icon('lock')}<div><b>اشتراک این آرایشگاه تمام شده است.</b>
     <p>پنل ${sub.graceLeft ? `تا ${fa(sub.graceLeft)} روز دیگر` : 'تا پایان امروز'} فقط قابل مشاهده است و پس از آن آرایشگاه غیرفعال می‌شود و برای مشتری‌ها هم نمایش داده نمی‌شود.</p>
     ${action}</div></div>`;
+}
+
+// ویرایش تعرفه‌ها (فقط مدیر سایت): قیمت فعلی و قیمت قبل از تخفیف هر پلن
+function openPlansModal() {
+  const num = (v) => Number(toEn(v).replace(/[,٬\s]/g, '')) || 0;
+  openModal(`
+    <div class="modal sm" role="dialog" aria-modal="true">
+      <div class="modal-head"><h2>ویرایش تعرفه‌ها</h2><button class="btn btn-ghost icon-btn sm" data-action="close" aria-label="بستن">${icon('x')}</button></div>
+      <form class="modal-body" id="plansForm" autocomplete="off">
+        <p class="muted" style="margin:0 0 14px;font-size:13.5px">مبلغ‌ها به تومان. اگر «قیمت قبل از تخفیف» را وارد کنید، پلن با قیمت خط‌خورده و درصد تخفیف نمایش داده می‌شود. سفارش‌های قبلی با همان مبلغ قبلی می‌مانند.</p>
+        ${PLANS.map((p) => `
+          <div class="price-row" data-months="${p.months}">
+            <b>${p.title}</b>
+            <div class="row cred-row">
+              <div class="field">
+                <label>قیمت فعلی</label>
+                <input class="input ltr-input" data-f="price" inputmode="numeric" maxlength="13" value="${p.price}">
+              </div>
+              <div class="field">
+                <label>قیمت قبل از تخفیف <span class="muted" style="font-weight:400">(اختیاری)</span></label>
+                <input class="input ltr-input" data-f="compare" inputmode="numeric" maxlength="13" value="${p.compare || ''}" placeholder="بدون تخفیف">
+              </div>
+            </div>
+            <span class="hint" data-f="preview"></span>
+          </div>`).join('')}
+      </form>
+      <div class="modal-foot">
+        <button class="btn btn-primary btn-lg" id="plansSave">${icon('check')}ذخیرهٔ تعرفه‌ها</button>
+        <button class="btn btn-lg" data-action="close">انصراف</button>
+      </div>
+    </div>`);
+  const form = $('#plansForm');
+  const read = () => $$('.price-row', form).map((r) => ({
+    months: Number(r.dataset.months), price: num($('[data-f="price"]', r).value), compare: num($('[data-f="compare"]', r).value),
+  }));
+  const preview = () => read().forEach((p) => {
+    const el = $(`.price-row[data-months="${p.months}"] [data-f="preview"]`, form);
+    const off = p.price && p.compare > p.price ? Math.round((1 - p.price / p.compare) * 100) : 0;
+    el.textContent = !p.price ? 'قیمت را وارد کنید'
+      : `${toman(p.price)} تومان${off ? `، به‌جای ${toman(p.compare)} (${fa(off)}٪ تخفیف)` : p.compare ? '؛ قیمت قبل از تخفیف باید بیشتر باشد' : '، بدون تخفیف'}`;
+  });
+  form.addEventListener('input', preview);
+  form.addEventListener('submit', (ev) => { ev.preventDefault(); $('#plansSave').click(); });
+  $('#plansSave').addEventListener('click', async () => {
+    const btn = $('#plansSave');
+    btn.disabled = true;
+    try {
+      const { plans } = await api('PUT', '/admin/plans', { plans: read() });
+      setPlans(plans);
+      closeModal();
+      toast('تعرفه‌ها ذخیره شد');
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, true);
+    }
+  });
+  preview();
 }
 
 // پنجرهٔ تمدید: انتخاب پلن، شماره کارت و ارسال تصویر رسید (همان روند صفحهٔ سفارش)
@@ -2095,6 +2172,8 @@ document.addEventListener('click', async (ev) => {
     }
     case 'renew':
       return openRenewModal();
+    case 'edit-plans':
+      return openPlansModal();
     case 'owner-renew': {
       // از صفحهٔ آرایشگاه منقضی: ورود مالک و رفتن به پنل (بنر تمدید آنجاست)
       const next = `#/s/${encodeURIComponent(state.shopId)}/admin`;
@@ -2325,6 +2404,7 @@ function route() {
 async function render(reload = true) {
   const r = route();
   try {
+    if (r.view !== 'user') await ensurePlans();
     if (r.view === 'join') { renderJoin(r.from); return; }
     if (r.view === 'home') {
       if (reload || !state.shops) await loadShops();
