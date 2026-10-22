@@ -1,6 +1,6 @@
 # Mohsen Iziy — CV
 
-This is my personal CV website. I'm a mobile developer building cross-platform apps (Android, iOS, Web) with **Flutter** and **Dart**, including the AI apps Findora, Dana and Doktorify.
+This is my personal CV website. I'm a **Senior Flutter Developer** with **5+ years of specialized experience** building scalable cross-platform apps (Android, iOS, Web) with **Flutter** and **Dart**, including the AI apps Findora, Dana and Doktorify.
 
 **Live site:** https://moh3niziy.github.io/CV/
 
