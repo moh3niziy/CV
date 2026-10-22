@@ -931,7 +931,7 @@
             align-items: flex-end;
             flex-wrap: wrap;
             gap: 16px;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
         }
 
         .kicker {
@@ -1003,19 +1003,45 @@
             top: -18px;
             font-family: var(--mono);
             font-size: 7rem;
-            color: rgba(255, 255, 255, .035);
+            color: rgba(19, 185, 253, .08);
             pointer-events: none;
             direction: ltr;
         }
 
-        .summary {
-            position: relative;
-            color: var(--text-soft);
-            font-size: 1rem;
-            line-height: 1.9;
+        .summary-card {
+            border-color: rgba(19, 185, 253, .2);
+            background: linear-gradient(135deg, rgba(19, 185, 253, .055), var(--surface) 58%);
         }
 
-        .summary strong {
+        .summary {
+            position: relative;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px 22px;
+            color: var(--text-soft);
+            font-size: .93rem;
+            line-height: 1.55;
+        }
+
+        .summary-lead {
+            grid-column: 1 / -1;
+            max-width: 96ch;
+            font-size: 1.02rem;
+        }
+
+        .summary-item {
+            padding-inline-start: 12px;
+            border-inline-start: 2px solid rgba(19, 185, 253, .35);
+        }
+
+        .summary-item > strong:first-child {
+            display: block;
+            margin-bottom: 3px;
+            color: var(--sky);
+            font-size: .84rem;
+        }
+
+        .summary-lead strong {
             color: var(--text);
         }
 
@@ -1050,14 +1076,14 @@
         }
 
         .sec {
-            margin-top: 60px;
+            margin-top: 48px;
         }
 
         .sec-head {
             display: flex;
             align-items: center;
             gap: 14px;
-            margin-bottom: 24px;
+            margin-bottom: 18px;
         }
 
         .sec-no {
@@ -1601,6 +1627,15 @@
             .stats {
                 grid-template-columns: 1fr 1fr;
             }
+
+            .summary {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+
+            .summary-lead {
+                grid-column: auto;
+            }
         }
 
         @media (max-width: 520px) {
@@ -1732,8 +1767,8 @@
             }
 
             .print-head {
-                margin-bottom: 20px;
-                padding-bottom: 14px;
+                margin-bottom: 12px;
+                padding-bottom: 10px;
                 border-bottom: 2px solid #13b9fd;
             }
 
@@ -1744,6 +1779,7 @@
 
             .print-head p {
                 color: var(--muted);
+                font-size: 9pt;
             }
 
             .print-head a {
@@ -1755,9 +1791,35 @@
             }
 
             .card {
+                padding: 16px 18px;
                 backdrop-filter: none;
                 box-shadow: none;
                 break-inside: avoid;
+            }
+
+            .summary-card {
+                border-inline-start: 3px solid #0ea5e9;
+                background: #f8fbff;
+            }
+
+            .summary {
+                gap: 8px 14px;
+                font-size: 9pt;
+                line-height: 1.42;
+            }
+
+            .summary-lead {
+                font-size: 9.5pt;
+            }
+
+            .summary-item {
+                border-inline-start-color: #7dd3fc;
+            }
+
+            .summary-item > strong:first-child {
+                margin-bottom: 2px;
+                color: #0369a1;
+                font-size: 8pt;
             }
 
             .reveal,
@@ -1767,7 +1829,51 @@
             }
 
             .sec {
-                margin-top: 28px;
+                margin-top: 20px;
+            }
+
+            .sec-head {
+                margin-bottom: 10px;
+            }
+
+            .tl-item+.tl-item {
+                margin-top: 10px;
+            }
+
+            .tl-head {
+                margin-bottom: 8px;
+            }
+
+            .tl-list {
+                gap: 4px;
+            }
+
+            .tl-list li {
+                font-size: 8.8pt;
+                line-height: 1.35;
+            }
+
+            .tags {
+                gap: 4px;
+                margin-top: 8px;
+            }
+
+            .tag {
+                padding: 3px 8px;
+                font-size: 7.5pt;
+            }
+
+            .stats {
+                gap: 8px;
+                margin-top: 10px;
+            }
+
+            .stat {
+                padding: 10px 8px;
+            }
+
+            .stat b {
+                font-size: 1.8rem;
             }
 
             .tl-progress {
@@ -1990,7 +2096,7 @@
             <article class="card summary-card reveal" style="--delay:.08s">
                 <span class="deco" aria-hidden="true">{ }</span>
                 <h3 class="label" data-i18n="summaryTitle"></h3>
-                <p class="summary" data-i18n-html="summary"></p>
+                <div class="summary" data-i18n-html="summary"></div>
             </article>
 
             <div class="stats" id="stats"></div>
@@ -2073,7 +2179,7 @@
                     printRole: 'Senior Flutter Developer — Android · iOS · Web',
                     pdf: 'Download PDF',
                     summaryTitle: 'About me',
-                    summary: 'Senior Flutter Developer with <strong>5+ years of specialized experience</strong> designing and building scalable, complex applications for <strong>Android, iOS and Web</strong>.<br><br><strong>Architecture & clean code:</strong> Apply Clean Architecture and SOLID principles to build maintainable, testable applications, with clear Data, Domain and Presentation layers and dependency injection. Experienced with advanced state management using <strong>Riverpod and Bloc</strong>, including complex asynchronous state.<br><br><strong>AI projects:</strong> Led development and implementation of advanced AI chatbots, including <strong>Dana, Findora and Doktorify</strong>, with a focus on real-time stream processing and polished user experience.<br><br><strong>Testing & quality:</strong> Experienced in unit and integration testing and mocking to reduce technical debt and production bugs.<br><br><strong>End-to-end delivery:</strong> Managed store submissions and CI/CD, handled publishing restrictions, and secured approvals from the <strong>App Store and Google Play</strong>.',
+                    summary: '<span class="summary-lead">Senior Flutter Developer with <strong>5+ years of specialized experience</strong> building scalable applications for <strong>Android, iOS and Web</strong>.</span><span class="summary-item"><strong>Architecture & clean code</strong>Clean Architecture, SOLID, layered design and dependency injection for maintainable, testable apps. Advanced state management with <strong>Riverpod and Bloc</strong>.</span><span class="summary-item"><strong>AI products</strong>Led development of <strong>Dana, Findora and Doktorify</strong>, focusing on real-time streams and polished user experience.</span><span class="summary-item"><strong>Testing & quality</strong>Unit and integration testing, plus mocking to reduce technical debt and production bugs.</span><span class="summary-item"><strong>End-to-end delivery</strong>CI/CD, store submissions and release restrictions; approved releases on the <strong>App Store and Google Play</strong>.</span>',
                     statYears: 'Years of experience',
                     statProjects: 'Projects shipped',
                     statPlatforms: 'Target platforms',
@@ -2116,7 +2222,7 @@
                     printRole: 'توسعه‌دهنده ارشد Flutter — اندروید · iOS · وب',
                     pdf: 'دریافت PDF',
                     summaryTitle: 'درباره من',
-                    summary: 'توسعه‌دهنده ارشد فلاتر با <strong>بیش از ۵ سال سابقه تخصصی</strong> در طراحی و پیاده‌سازی اپلیکیشن‌های مقیاس‌پذیر و پیچیده برای <strong>Android، iOS و Web</strong>.<br><br><strong>معماری و کدنویسی تمیز:</strong> به‌کارگیری Clean Architecture و اصول SOLID برای ساخت اپلیکیشن‌های قابل نگهداری و تست‌پذیر، با تفکیک دقیق لایه‌های Data، Domain و Presentation و استفاده از تزریق وابستگی (DI). دارای تجربه در مدیریت state پیشرفته با <strong>Riverpod و Bloc</strong> و مدیریت وضعیت‌های پیچیده و ناهمگام.<br><br><strong>پروژه‌های هوش مصنوعی:</strong> رهبری فاز توسعه و پیاده‌سازی چت‌بات‌های پیشرفته هوش مصنوعی از جمله <strong>Dana، Findora و Doktorify</strong> با تمرکز بر پردازش هم‌زمان جریان داده‌ها (Streams) و تجربه کاربری بهینه.<br><br><strong>تست‌نویسی و کیفیت:</strong> تسلط بر تست‌های واحد و یکپارچه و روش‌های Mocking برای کاهش بدهی فنی و باگ‌های محیط تولید.<br><br><strong>انتشار سرتاسری:</strong> مدیریت انتشار در استورها و CI/CD، رسیدگی به محدودیت‌های انتشار و اخذ تأییدیه از <strong>App Store و Google Play</strong>.',
+                    summary: '<span class="summary-lead">توسعه‌دهنده ارشد فلاتر با <strong>بیش از ۵ سال سابقه تخصصی</strong> در ساخت اپلیکیشن‌های مقیاس‌پذیر برای <strong>Android، iOS و Web</strong>.</span><span class="summary-item"><strong>معماری و کدنویسی تمیز</strong>به‌کارگیری Clean Architecture، اصول SOLID، تفکیک لایه‌ها و تزریق وابستگی برای ساخت اپلیکیشن‌های قابل نگهداری و تست‌پذیر؛ مدیریت state پیشرفته با <strong>Riverpod و Bloc</strong>.</span><span class="summary-item"><strong>محصولات هوش مصنوعی</strong>رهبری توسعه <strong>Dana، Findora و Doktorify</strong> با تمرکز بر پردازش هم‌زمان Streams و تجربه کاربری بهینه.</span><span class="summary-item"><strong>تست‌نویسی و کیفیت</strong>تست واحد و یکپارچه و روش‌های Mocking برای کاهش بدهی فنی و باگ‌های محیط تولید.</span><span class="summary-item"><strong>انتشار سرتاسری</strong>مدیریت CI/CD و انتشار در استورها، رسیدگی به محدودیت‌ها و اخذ تأییدیه از <strong>App Store و Google Play</strong>.</span>',
                     statYears: 'سال تجربه',
                     statProjects: 'پروژه منتشرشده',
                     statPlatforms: 'پلتفرم هدف',
