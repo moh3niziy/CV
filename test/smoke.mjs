@@ -422,6 +422,11 @@ const off = await api('PUT', `/api/admin/shops/${shopId}/status`, { token: super
 check('super غیرفعال کرد → 200', off.status === 200 && off.json.active === false, off.json);
 const pubOff = await api('GET', `/api/shops/${shopId}`);
 check('صفحهٔ مشتری آرایشگاه غیرفعال → 403', pubOff.status === 403, pubOff.json);
+check('پیام غیرفعال برای بازدیدکنندهٔ ناشناس نام آرایشگاه را ندارد', !String(pubOff.json?.error).includes('آرایشگاه تست'), pubOff.json);
+const pubOffOwner = await api('GET', `/api/shops/${shopId}`, { token: ownerToken });
+check('پیام غیرفعال برای مالک همان آرایشگاه نام را دارد', pubOffOwner.status === 403 && String(pubOffOwner.json?.error).includes('آرایشگاه تست'), pubOffOwner.json);
+const panelOff = await api('GET', `/api/admin/shops/${shopId}/data`, { token: ownerToken });
+check('پنل آرایشگاه غیرفعال: پیام با نام آرایشگاه', panelOff.status === 403 && String(panelOff.json?.error).includes('آرایشگاه تست'), panelOff.json);
 const pubOffSuper = await api('GET', `/api/shops/${shopId}`, { token: superToken });
 check('super صفحهٔ غیرفعال را می‌بیند', pubOffSuper.status === 200, pubOffSuper.status);
 const loginOff = await api('POST', `/api/shops/${shopId}/login`, { body: { username: 'owner_one', password: 'pass1234' } });
@@ -473,6 +478,10 @@ const expPanel = await api('GET', `/api/admin/shops/${shopId}/data`, { token: ex
 check('مالک منقضی پنل را فقط‌مشاهدتی می‌خواند', expPanel.status === 200, expPanel.status);
 const expEdit = await api('PUT', `/api/admin/shops/${shopId}`, { token: expOwnerToken, body: { name: 'تغییر نام', location: 'ل' } });
 check('ویرایش اطلاعات آرایشگاه توسط مالک منقضی مسدود است', expEdit.status === 403, expEdit.json);
+// آرایشگر با توکن معتبرِ قبل از انقضا: پیام انقضا باید بگوید کدام آرایشگاه
+const expBarberPanel = await api('GET', `/api/admin/shops/${shopId}/data`, { token: barberToken });
+check('پیام انقضا در پنل آرایشگر نام آرایشگاه را دارد',
+  expBarberPanel.status === 403 && expBarberPanel.json?.expired === true && expBarberPanel.json?.shopName === 'آرایشگاه تست', expBarberPanel.json);
 
 /* ================================================================ 9. رسید تمدید */
 section('رسید تمدید از پنل مالک');

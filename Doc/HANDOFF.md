@@ -70,14 +70,14 @@ There is no `vars` block on purpose. Admin credentials are secrets, and a `vars`
 ## 3. Repository layout
 
 ```
-worker.js          (1014 lines) Cloudflare Worker: all /api routes, auth, D1 schema + migrations
+worker.js          (1023 lines) Cloudflare Worker: all /api routes, auth, D1 schema + migrations
 wrangler.jsonc     Worker config (assets + D1 binding)
 public/index.html  (58 lines) Shell page: topbar, #app, #modalRoot, theme bootstrap, on-screen crash reporter
 public/app.js      (2462 lines) whole front end (vanilla JS, no build step, no framework)
 public/styles.css  (766 lines) design tokens (light/dark), components, RTL, responsive
 Doc/HANDOFF.md     this file
 Doc/HANDOFF.pdf    a rendered snapshot from 2026-10-17 — **stale**, not regenerated on purpose
-test/smoke.mjs     API smoke test (631 lines) — run with `node test/smoke.mjs` (see §9)
+test/smoke.mjs     API smoke test (640 lines) — run with `node test/smoke.mjs` (see §9)
 test/mock-d1.mjs   dependency-free D1 mock over node:sqlite (50 lines)
 README.md          empty (the user cleared it on GitHub; leave it unless asked)
 .gitignore
@@ -93,7 +93,7 @@ There are no npm dependencies and no build. Static files are served by Workers s
 
 ## 4. Data model (D1)
 
-The schema is created and migrated automatically on the first request (`migrate()` in `worker.js`, lines 115-163). There are no migration files.
+The schema is created and migrated automatically on the first request (`migrate()` in `worker.js`, lines 117-165). There are no migration files.
 
 ```sql
 shops(id TEXT PK, name, location, data TEXT /*JSON*/, version INTEGER, created_at INTEGER,
@@ -115,7 +115,7 @@ auth_log(key PK /* 'super|ip' or '<shopId>|ip' */, tries INTEGER, blocked_until 
   - **appointment:** `{ id, barberId, date:"YYYY-MM-DD", start, end, customerName, customerPhone, services:[{id,name,minutes}], createdAt }`.
 - **Optimistic concurrency:** the client sends `version`. The server does `UPDATE … WHERE version = ?`, and a mismatch returns 409. The client `mutate()` reloads, reapplies the change and retries up to 3 times.
 - **Columns added later:** ten of the columns above (and the whole `receipts.status`/`amount`) were added with `ALTER TABLE … ADD COLUMN` inside try/catch, run on **every** cold start — 14 statements whose only usual outcome is a "duplicate column" error. Tracked as an open item.
-- **Legacy migration:** an old single-shop table `store` is migrated into shop id `main`. Shops with an empty `expires_at` get `today + 30 days` (line 162), which is one of the two places the automatic free month comes from.
+- **Legacy migration:** an old single-shop table `store` is migrated into shop id `main`. Shops with an empty `expires_at` get `today + 30 days` (line 164), which is one of the two places the automatic free month comes from.
 - **Pruning:** appointments older than 180 days are dropped on save, but only **in the browser** (`saveAdmin` in `app.js:190`). The server never prunes, so an unused device can rewrite old rows back.
 
 ---
@@ -131,9 +131,9 @@ auth_log(key PK /* 'super|ip' or '<shopId>|ip' */, tries INTEGER, blocked_until 
 - **Tokens:** HMAC-signed `base64url(payload).sig` with a 30-day expiry. The payload carries the role, shop and username plus a fragment of the password hash, so **changing a password invalidates old tokens**. Tokens are stored in `localStorage` key `hd_auth`.
 - **Passwords:** salted SHA-256 (PBKDF2 was avoided because of the free plan's CPU limit). Usernames are `^[a-z0-9_.-]{3,32}$` and stored lowercase.
 - **Persian digits:** input in Persian digits is normalised everywhere (`toEn`).
-- **Expired shops:** the **owner** may still log in (read-only) to read the panel and upload a renewal receipt; **barbers** are locked out entirely, and customers see the expiry page.
+- **Expired shops:** the **owner** may still log in (read-only) to read the panel and upload a renewal receipt; **barbers** are locked out entirely, and customers see the expiry page. `readAuth` (`worker.js:227-247`) joins `shops.name` into the auth object as `shopName`, so every shop-scoped 403 the panel can hit — `requireShop` (`worker.js:253-259`) expiry or disabling — names the shop the same way the customer page already did.
 - **Barbers cannot touch accounts:** `DELETE …/accounts/:barberId` is `requireShop(auth, id, ['owner'])`, so a barber gets 403 even for their own account. Only the owner or super provisions and removes barber logins.
-- **Login rate limit (`worker.js:184-218`).** Wrong passwords are counted in `auth_log` under the key `scope|ip`, where `scope` is the shop id — except when the *admin username* is typed into a shop login form, which is charged to the `super` scope (`loginScope`), so the admin ceiling cannot be multiplied across shops. `MAX_LOGIN_FAILS = 10` failures inside `LOGIN_LOCK_MS` (15 minutes) sets `blocked_until` and every later attempt from that IP+scope — **even with the right password** — returns 429 with `LOGIN_MSG`. A successful login deletes the row, so typos do not accumulate across the day; rows untouched for 24 hours are pruned by the same batch. The counter lives in D1, not memory, so it survives across isolates. With no `cf-connecting-ip` header (`wrangler dev` locally) nothing is counted, which is also why the smoke suite only rate-limits requests that pass the header.
+- **Login rate limit (`worker.js:186-220`).** Wrong passwords are counted in `auth_log` under the key `scope|ip`, where `scope` is the shop id — except when the *admin username* is typed into a shop login form, which is charged to the `super` scope (`loginScope`), so the admin ceiling cannot be multiplied across shops. `MAX_LOGIN_FAILS = 10` failures inside `LOGIN_LOCK_MS` (15 minutes) sets `blocked_until` and every later attempt from that IP+scope — **even with the right password** — returns 429 with `LOGIN_MSG`. A successful login deletes the row, so typos do not accumulate across the day; rows untouched for 24 hours are pruned by the same batch. The counter lives in D1, not memory, so it survives across isolates. With no `cf-connecting-ip` header (`wrangler dev` locally) nothing is counted, which is also why the smoke suite only rate-limits requests that pass the header.
 
 ---
 
@@ -143,7 +143,7 @@ All bodies are JSON, capped at 1 MiB (`MAX_BODY`). Errors are `{error, …extras
 
 **Public:**
 - `GET /api/shops`: the list, with a `barbers` count. For anyone but super, `sub`, `ownerName` and `ownerPhone` are stripped and disabled/expired shops are hidden.
-- `GET /api/shops/:id`: the customer view. Customer names and phones are stripped and only busy ranges (`{barberId,date,start,end}`) are sent; `sub` is stripped. An expired shop returns 403 `{expired, support, shopName}` **even for super**. A disabled shop returns 403 except for super.
+- `GET /api/shops/:id`: the customer view. Customer names and phones are stripped and only busy ranges (`{barberId,date,start,end}`) are sent; `sub` is stripped. An expired shop returns 403 `{expired, support, shopName}` **even for super**. A disabled shop returns 403 except for super; its message names the shop only when the caller is that shop's own owner or barber with a live token, so an anonymous visitor learns no more than before.
 - `POST /api/shops/:id/login`: owner/barber login (super credentials also accepted). 403 if the shop is disabled; if expired, only the **owner** may log in (for renewal) and barbers get 403.
 - `POST /api/login`: super login. 503 if the secrets are missing.
 - `GET /api/support`: `{support, payment}` — support contacts **and the card number** for card-to-card payment.
@@ -256,7 +256,7 @@ Auto-refresh is disabled on the join page (`route().view !== 'join'`, `app.js:24
 
 ## 9. How things were tested (reproduce this)
 
-**API: `node test/smoke.mjs`** — committed, no dependencies, no network, no Cloudflare. It imports `worker.js` directly, wraps calls in `Request` objects against `https://hairdresser.test` and passes a fake D1 (`test/mock-d1.mjs`, built on `node:sqlite`) plus a stub `ASSETS`. 148 assertions cover login, the per-IP login rate limit, shop creation, the server-side `PUT …/data` validation, owner/barber permissions, the past-appointment rules, `version` conflicts, customer-view redaction, disabling, the whole subscription cycle, renewal receipts, dynamic plans and leads. Exit code 0 means green; a failure prints its Persian name plus the response body.
+**API: `node test/smoke.mjs`** — committed, no dependencies, no network, no Cloudflare. It imports `worker.js` directly, wraps calls in `Request` objects against `https://hairdresser.test` and passes a fake D1 (`test/mock-d1.mjs`, built on `node:sqlite`) plus a stub `ASSETS`. 152 assertions cover login, the per-IP login rate limit, shop creation, the server-side `PUT …/data` validation, owner/barber permissions, the past-appointment rules, `version` conflicts, customer-view redaction, disabling, the whole subscription cycle, renewal receipts, dynamic plans and leads. Exit code 0 means green; a failure prints its Persian name plus the response body.
 
 Three constraints when extending it:
 - `ready` and `secret` in `worker.js` are **module-level**, so `migrate()` only runs for the first database. The suite therefore shares **one** database — do not build a second `MockD1` mid-run.
@@ -307,7 +307,7 @@ The user cannot see your scratchpad. It gets wiped between sessions, so rebuild 
 8. The join/lead page with pricing, a promo link on every shop page, and a leads inbox in the super admin. Then mobile fixes (the blank page was caused by the off-screen honeypot).
 9. Card-to-card payments: an order flow on the join page (lead → pay → receipt → built), renewal receipts uploaded from the owner's read-only panel, and a «تمدیدها» review tab for the super. Then dynamic tariffs (prices editable in the panel, `compare` shown as an offer), owner name/phone on shops, and the `/api/*` routes listed in §6.
 10. 2026-10-24: stale root copies of `app.js`, `styles.css` and `worker.mjs` deleted, and `test/smoke.mjs` added as the first committed, dependency-free API test (§9).
-11. 2026-10-24 (hardening pass): per-IP login rate limit in `auth_log` (§5), server-side validation and size caps for `PUT …/data` (§6), and the front end switched to a single Asia/Tehran clock for «today»/«now» (§8). Each came with smoke assertions.
+11. 2026-10-24 (hardening pass): per-IP login rate limit in `auth_log` (§5), server-side validation and size caps for `PUT …/data` (§6), the front end switched to a single Asia/Tehran clock for «today»/«now» (§8), and the shop-scoped 403s now name the shop (§5). Each came with smoke assertions.
 
 The messy commits `09ba356` and `0822f18` have a whole shell command as their message. The user chose not to rewrite them.
 
@@ -323,16 +323,15 @@ The messy commits `09ba356` and `0822f18` have a whole shell command as their me
 **Known gaps, no decision needed:**
 
 3. **The barber phone is format-checked on the server but not in the form.** `cleanBarber` requires `cleanPhone`, while `applyBarber` (`app.js:249`) only requires it to be non-empty, so a shop whose stored barber phone is something like «تماس بگیرید» now gets a Persian 400 toast on every save. If a real shop hits it: either add the same check to the form, or relax `cleanBarber` to a length cap like the customer phone.
-4. **The expired error omits the shop name** in the panel path: `requireShop()` calls `expiredError()` with no argument, while the customer page calls it with the name. The two messages differ for no reason.
-5. **14 `ALTER TABLE` statements run on every cold start** (`migrate()`), which is pure wasted work once the schema is current.
-6. **No security headers on API responses** — only `content-type` and `cache-control: no-store`. Decided: `X-Content-Type-Options: nosniff`, `Referrer-Policy` and `X-Frame-Options` now; **no CSP yet** (it would break the inline bootstrap script in `index.html` and the CDN font).
-7. **The admin lead and renewal lists are capped at 300 with no pagination**, and every receipt keeps its full base64 image in `receipts.image` forever.
-8. **Auto-refresh (every 3 minutes) re-renders the panel**, which wipes the two inline forms that live outside a modal — the owner-as-barber form and the shop-settings form. There is also dead code in `setAuth` (`store.set('hd_pass', null)`, `app.js:138`).
+4. **14 `ALTER TABLE` statements run on every cold start** (`migrate()`), which is pure wasted work once the schema is current.
+5. **No security headers on API responses** — only `content-type` and `cache-control: no-store`. Decided: `X-Content-Type-Options: nosniff`, `Referrer-Policy` and `X-Frame-Options` now; **no CSP yet** (it would break the inline bootstrap script in `index.html` and the CDN font).
+6. **The admin lead and renewal lists are capped at 300 with no pagination**, and every receipt keeps its full base64 image in `receipts.image` forever.
+7. **Auto-refresh (every 3 minutes) re-renders the panel**, which wipes the two inline forms that live outside a modal — the owner-as-barber form and the shop-settings form. There is also dead code in `setAuth` (`store.set('hd_pass', null)`, `app.js:138`).
 
 **Environment / process:**
 
-9. Two Cloudflare builds failed earlier (`ccbf101`, `d7abf7b`) for an unknown reason; later builds succeeded. If a deploy does not appear, ask the user for the build log («Copy build log»).
-10. Whether the GitHub repo is private is unknown. If it is made private, the Cloudflare GitHub app needs access to the repo.
-11. Shop owner credentials are set by the super when creating or editing a shop. Shops created before accounts existed have no owner until the super sets one.
-12. `Doc/HANDOFF.pdf` is a 2026-10-17 render and is **not** kept in sync with this file. Trust the Markdown.
-13. **`node test/smoke.mjs` is the regression gate** — run it before handing over any change to `worker.js`, and add an assertion when you fix one of the gaps above. There is still no CI; nothing runs it automatically.
+8. Two Cloudflare builds failed earlier (`ccbf101`, `d7abf7b`) for an unknown reason; later builds succeeded. If a deploy does not appear, ask the user for the build log («Copy build log»).
+9. Whether the GitHub repo is private is unknown. If it is made private, the Cloudflare GitHub app needs access to the repo.
+10. Shop owner credentials are set by the super when creating or editing a shop. Shops created before accounts existed have no owner until the super sets one.
+11. `Doc/HANDOFF.pdf` is a 2026-10-17 render and is **not** kept in sync with this file. Trust the Markdown.
+12. **`node test/smoke.mjs` is the regression gate** — run it before handing over any change to `worker.js`, and add an assertion when you fix one of the gaps above. There is still no CI; nothing runs it automatically.

@@ -108,7 +108,9 @@ async function hmac(secret, data) {
 let ready = null;
 let secret = null;
 function init(db) {
-  ready ??= migrate(db).catch((err) => { ready = null; throw err; });
+  // اگر مهاجرت شکست بخورد وضعیتی نیم‌ساخته باقی نمی‌ماند: درخواست بعدی دوباره migrate را اجرا می‌کند
+  // و تا پیش از موفق شدن آن هیچ کلید امضایی از دور قبل استفاده نمی‌شود.
+  ready ??= migrate(db).catch((err) => { ready = null; secret = null; throw err; });
   return ready;
 }
 
@@ -231,12 +233,14 @@ async function readAuth(request, env, db) {
   try { p = JSON.parse(unb64url(body)); } catch { return null; }
   if (!p || p.e < Date.now()) return null;
   if (p.r === 'super') { const m = await superMark(env); return m && safeEqual(p.h, m) ? p : null; }
-  const acc = await db.prepare(`SELECT a.pass, a.role, a.barber_id, s.active, s.expires_at FROM accounts a
+  const acc = await db.prepare(`SELECT a.pass, a.role, a.barber_id, s.name AS shopName, s.active, s.expires_at FROM accounts a
     JOIN shops s ON s.id = a.shop_id WHERE a.shop_id = ? AND a.username = ?`).bind(p.s, p.u).first();
   if (!acc || acc.role !== p.r || !safeEqual(passMark(acc.pass), p.h)) return null;
   const sub = subStatus(acc.expires_at);
   return {
     ...p, b: acc.barber_id,
+    // نام آرایشگاه از دیتابیس، نه از توکن: پیام‌های دسترسی باید بگویند کدام آرایشگاه منظوره
+    shopName: acc.shopName,
     // منقضی: مالک فقط برای دیدن پنل و ارسال رسید تمدید وارد می‌شود (فقط مشاهده)
     inactive: !acc.active, expired: sub.state === 'expired', readonly: sub.state === 'grace' || sub.state === 'expired',
   };
@@ -249,8 +253,8 @@ function requireAuth(auth) {
 function requireShop(auth, shopId, roles, { allowExpired = false } = {}) {
   requireAuth(auth);
   if (auth.r === 'super') return;
-  if (auth.inactive) throw new HttpError(403, 'این آرایشگاه غیرفعال شده است');
-  if (auth.expired && !(allowExpired && auth.r === 'owner')) throw expiredError();
+  if (auth.inactive) throw new HttpError(403, `آرایشگاه «${auth.shopName}» غیرفعال شده است`);
+  if (auth.expired && !(allowExpired && auth.r === 'owner')) throw expiredError(auth.shopName);
   if (auth.s !== shopId || !roles.includes(auth.r)) throw new HttpError(403, 'به این بخش دسترسی ندارید');
 }
 
@@ -612,7 +616,12 @@ async function handleApi(request, env, path) {
       const shop = await getShop(db, id);
       // صفحهٔ مشتری آرایشگاه منقضی برای همه (حتی مدیر سایت) پیام پایان اشتراک را نشان می‌دهد؛ پنل مدیریت جداست
       if (shop.shop.sub.state === 'expired') throw expiredError(shop.shop.name);
-      if (!shop.shop.active && auth?.r !== 'super') throw new HttpError(403, 'این آرایشگاه در حال حاضر غیرفعال است');
+      if (!shop.shop.active && auth?.r !== 'super') {
+        // نام آرایشگاه را در پیام «غیرفعال» فقط به کسی می‌دهیم که خودش عضو همان آرایشگاه است
+        // (مالک یا آرایشگر با توکن معتبر)؛ بازدیدکنندهٔ ناشناس مثل قبل پیام عمومی می‌بیند.
+        const staff = auth && (auth.r === 'owner' || auth.r === 'barber') && auth.s === id;
+        throw new HttpError(403, staff ? `آرایشگاه «${shop.shop.name}» در حال حاضر غیرفعال است` : 'این آرایشگاه در حال حاضر غیرفعال است');
+      }
       return json(publicView(shop));
     }
 
