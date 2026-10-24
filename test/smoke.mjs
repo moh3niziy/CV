@@ -42,11 +42,17 @@ function tehranNow() {
 const tehranDate = () => tehranNow().date;
 const addDays = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
 const pad = (n) => String(n).padStart(2, '0');
-// ساعتی که مطمئنیم امروز و در آیندهٔ تهران است
+// ساعتی که مطمئنیم در آیندهٔ تهران است. تا ۲۳:۲۹ سقف می‌کند تا نوبتِ ۳۰ دقیقه‌ای سرِ شب
+// از نیمه‌شب رد نشود؛ اگر آن ساعت برای امروز گذشته باشد، apptDate او را فردا می‌گذارد.
 function futureTime(minutesFromNow = 90) {
-  const m = Math.min(1439, tehranNow().min + minutesFromNow);
+  const m = Math.min(1409, tehranNow().min + minutesFromNow);
   return `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 }
+// تاریخی که این ساعتِ مشخص هنوز گذشته نباشد، تا تست در هر ساعتی از روز سبز بماند
+const apptDate = (time) => {
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + m < tehranNow().min + 6 ? addDays(tehranDate(), 1) : tehranDate();
+};
 
 /* ---------------------------------------------------------------- env */
 let db = new MockD1();
@@ -92,7 +98,7 @@ const BARBER = {
   services: [{ id: 's1', name: 'اصلاح مو', minutes: 30 }],
 };
 const appointment = (id, start) => ({
-  id, barberId: 'b1', date: tehranDate(), start, end: addMin(start, 30),
+  id, barberId: 'b1', date: apptDate(start), start, end: addMin(start, 30),
   customerName: 'علی', customerPhone: '091299999999',
   services: [{ id: 's1', name: 'اصلاح مو', minutes: 30 }],
   createdAt: Date.now(),
@@ -268,6 +274,77 @@ check('شمارش از اول شروع می‌شود (۶ تلاش بعدی هم 
 for (let i = 1; i <= 12; i++) await loginTry(`/api/shops/${shopId}/login`, 'owner_one', 'no-ip', undefined);
 const noIp = await loginTry(`/api/shops/${shopId}/login`, 'owner_one', 'pass1234', undefined);
 check('بدون سربرگ IP محدودیت اعمال نمی‌شود → 200', noIp.status === 200, noIp.json);
+
+/* ================================================================ 3c. اعتبارسنجی دادهٔ آرایشگاه */
+section('اعتبارسنجی سمت سرور برای PUT data');
+const B2 = { ...BARBER, id: 'b2', name: 'آرایشگر دوم' };
+const dataPut = async (data, token = ownerToken) =>
+  api('PUT', `/api/admin/shops/${shopId}/data`, { token, body: { data, version: await curVersion(shopId) } });
+const bad = (name, data, token = ownerToken) => dataPut(data, token).then((r) => check(name, r.status === 400, r.json));
+
+const okRound = await dataPut({ barbers: [BARBER, B2], appointments: [appointment('v1', futureTime())] });
+check('دادهٔ معمولی پنل بدون خطا ذخیره می‌شود', okRound.status === 200, okRound.json);
+const round = (await api('GET', `/api/admin/shops/${shopId}/data`, { token: ownerToken })).json?.data;
+check('ساعت کاری، خدمات و تلفن آرایشگر دست‌نخورده ماند',
+  round?.barbers?.[0]?.hours?.['3']?.start === '09:00' && round?.barbers?.[0]?.phone === '09121234567' && round?.barbers?.[0]?.services?.length === 1,
+  round?.barbers?.[0]);
+const vBefore = await curVersion(shopId);
+
+await bad('نام مشتری ۵۰۰۰ کاراکتری → 400', { barbers: [BARBER, B2], appointments: [{ ...appointment('v2', futureTime()), customerName: 'ا'.repeat(5000) }] });
+await bad('پایان نوبت قبل از شروع → 400', { barbers: [BARBER, B2], appointments: [{ ...appointment('v3', futureTime()), end: '09:00' }] });
+await bad('barberId ناموجود در نوبت جدید → 400', { barbers: [BARBER, B2], appointments: [{ ...appointment('v4', futureTime()), barberId: 'ghost' }] });
+await bad('تاریخ روی تقویم وجود ندارد (۳۰ فوریه) → 400', { barbers: [BARBER, B2], appointments: [{ ...appointment('v5', '10:00'), date: '2027-02-30' }] });
+await bad('ساعت بدون صفر اول (9:30) → 400', { barbers: [BARBER, B2], appointments: [{ ...appointment('v6', '10:00'), start: '9:30' }] });
+await bad('خدمت با شناسهٔ آرایشگر دیگر → 400', { barbers: [BARBER, B2], appointments: [{ ...appointment('v7', futureTime()), services: [{ id: 's9', name: 'خدمت ساختگی', minutes: 30 }] }] });
+await bad('مدت خدمت بیش از ۶۰۰ دقیقه → 400', { barbers: [{ ...BARBER, services: [{ id: 's1', name: 'اصلاح مو', minutes: 601 }], hours: BARBER.hours }], appointments: [] });
+await bad('تلفن آرایشگر بدون رقم → 400', { barbers: [{ ...BARBER, phone: 'تماس بگیرید' }], appointments: [] });
+await bad('ساعت کاری یک روز کم است → 400', { barbers: [{ ...BARBER, hours: { ...BARBER.hours, 5: undefined } }], appointments: [] });
+await bad('شناسهٔ تکراری دو نوبت → 400', { barbers: [BARBER, B2], appointments: [appointment('same', futureTime()), appointment('same', futureTime(120))] });
+await bad('۴۱ آرایشگر → 400', { barbers: [...Array(41)].map((_, i) => ({ ...BARBER, id: `x${i}` })), appointments: [] });
+check('هیچ نوشتن ردشده‌ای version را تکان نداد', await curVersion(shopId) === vBefore);
+
+// نوبتی که دقیقاً نیمه‌شب تمام می‌شود پنل می‌فرستد؛ نباید رد شود
+const midnight = await dataPut({ barbers: [BARBER, B2], appointments: [{ ...appointment('v8', '23:30'), end: '24:00' }] });
+check('پایان نوبت روی ۲۴:۰۰ مجاز است', midnight.status === 200, midnight.json);
+
+// فیلدهای ناشناخته ذخیره نمی‌شوند
+const extra = await dataPut({
+  barbers: [{ ...BARBER, evil: '<script>alert(1)</script>' }, B2],
+  appointments: [{ ...appointment('v9', futureTime()), note: 'دلخواه', admin: true }],
+});
+const stored = JSON.parse(db.prepare('SELECT data FROM shops WHERE id = ?').bind(shopId).first().data);
+check('فیلدهای اضافه در دیتابیس جا نمی‌مانند',
+  extra.status === 200 && !('evil' in stored.barbers[0]) && !('note' in stored.appointments[0]) && !('admin' in stored.appointments[0]),
+  stored.barbers?.[0]);
+
+// شمارهٔ مشتری هم مثل پنل به ارقام لاتین تبدیل می‌شود
+const faPhone = await dataPut({ barbers: [BARBER, B2], appointments: [{ ...appointment('v10', futureTime()), customerPhone: '۰۹۱۲۳۳۳۴۴۵۵' }] });
+const storedPhone = JSON.parse(db.prepare('SELECT data FROM shops WHERE id = ?').bind(shopId).first().data).appointments[0].customerPhone;
+check('شمارهٔ مشتری با ارقام فارسی به لاتین تبدیل شد', faPhone.status === 200 && storedPhone === '09123334455', storedPhone);
+
+// نوبت‌های یتیم و خدمات حذف‌شدهٔ قدیمی ذخیرهٔ بعدی را قفل نمی‌کنند
+seedAppointment(shopId, { ...appointment('orphan', '11:00'), date: addDays(tehranDate(), 1), barberId: 'gone', services: [{ id: 's-gone', name: 'خدمت حذف‌شده', minutes: 30 }] });
+const keepOrphan = await dataPut({
+  barbers: [BARBER, B2],
+  appointments: [{ ...appointment('orphan', '11:00'), date: addDays(tehranDate(), 1), barberId: 'gone', services: [{ id: 's-gone', name: 'خدمت حذف‌شده', minutes: 30 }] }],
+});
+check('نوبت قدیمی یتیم ذخیره را بلاک نمی‌کند', keepOrphan.status === 200, keepOrphan.json);
+
+// آرایشگر نمی‌تواند نوبت همکارش را به اسم خودش به سرور بنویسد
+const p2 = { ...appointment('p2', futureTime(200)), barberId: 'b2' };
+const otherBooking = await dataPut({ barbers: [BARBER, B2], appointments: [p2] });
+check('نوبت آرایشگر دوم ثبت شد', otherBooking.status === 200, otherBooking.json);
+const claim = await dataPut({
+  barbers: [{ ...BARBER, name: 'تغییر توسط آرایشگر' }, B2],
+  appointments: [{ ...p2, barberId: 'b1' }, appointment('c2', futureTime(260))],
+}, barberToken);
+const afterClaim = (await api('GET', `/api/admin/shops/${shopId}/data`, { token: ownerToken })).json?.data;
+const listClaim = afterClaim?.appointments || [];
+check('ادعای آرایشگر روی نوبت همکارش نوشته نشد (بدون شناسهٔ تکراری)',
+  claim.status === 200 && listClaim.length === 2 && new Set(listClaim.map((a) => a.id)).size === 2, listClaim);
+check('نوبت همکار همان آرایشگر را نگه داشت', listClaim.find((a) => a.id === 'p2')?.barberId === 'b2', listClaim);
+check('نوبت تازهٔ خودش ثبت شد', listClaim.some((a) => a.id === 'c2' && a.barberId === 'b1'), listClaim);
+check('لیست آرایشگرها از طرف آرایشگر عوض نشد', (afterClaim?.barbers || []).every((b) => b.name !== 'تغییر توسط آرایشگر'), afterClaim?.barbers);
 
 /* ================================================================ 4. قواعد زمان */
 section('جلوگیری از ثبت نوبت در گذشته');

@@ -49,7 +49,20 @@ const pad = (n) => String(n).padStart(2, '0');
 const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
 const fromMin = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const faTime = (t) => fa(typeof t === 'number' ? fromMin(t) : t);
-const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+
+// «امروز» و «الان» با ساعت تهران، همان مرجعی که سرور قانون «نوبت گذشته» را با آن می‌سنجد.
+// با ساعت دستگاه، مشتری یا آرایشگر خارج از ایران روز دیگری را امروز می‌داند و
+// بازه‌های خالی امروز نادرست بریده می‌شود.
+const F_TEHRAN = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false, hourCycle: 'h23',
+});
+const tehranNow = () => {
+  const p = Object.fromEntries(F_TEHRAN.formatToParts(new Date()).map((x) => [x.type, x.value]));
+  // ساعت‌گردان در موتورهای قدیمی ممکن است h24 بدهد؛ ۲۴ همان نیمه‌شب است
+  return { date: `${p.year}-${p.month}-${p.day}`, min: Number(p.hour) % 24 * 60 + Number(p.minute) };
+};
+const nowMin = () => tehranNow().min;
 
 function fmtDur(min) {
   const h = Math.floor(min / 60), m = min % 60;
@@ -60,7 +73,7 @@ function fmtDur(min) {
 
 const isoOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const dateOf = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
-const todayISO = () => isoOf(new Date());
+const todayISO = () => tehranNow().date;
 const addDays = (iso, n) => { const d = dateOf(iso); d.setDate(d.getDate() + n); return isoOf(d); };
 const weekday = (iso) => String(dateOf(iso).getDay());
 

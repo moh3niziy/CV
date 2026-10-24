@@ -42,6 +42,16 @@ const MAX_RECEIPT = 900 * 1024;   // حداکثر حجم تصویر رسید (da
 const MAX_RECEIPTS_PER_LEAD = 5;
 const LEAD_STATUSES = ['new', 'contacted', 'paid', 'done', 'rejected'];
 
+// سقف‌های دادهٔ آرایشگاه؛ همان اندازه‌هایی که پنل مالک در فرم‌ها دارد را حالا سرور هم الزامی می‌کند
+const MAX_BARBERS = 40;
+const MAX_APPOINTMENTS = 2000;
+const MAX_SERVICES = 40;        // خدمات هر آرایشگر
+const MAX_APPT_SERVICES = 20;   // خدمات هر نوبت
+const ID_RE = /^[A-Za-z0-9_-]{1,24}$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const DAY_KEYS = ['0', '1', '2', '3', '4', '5', '6']; // کلیدهای hours، همان Date.getDay()
+
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
     status,
@@ -58,6 +68,9 @@ const toEn = (v) =>
     .replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
     .replace(/[٠-٩]/g, (d) => d.charCodeAt(0) - 1632)
     .trim();
+
+// عدد را داخل پیام فارسی با رقم فارسی می‌نویسد
+const fa = (n) => String(n).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d]);
 
 /* ---------------------------------------------------------------- crypto */
 const enc = new TextEncoder();
@@ -284,6 +297,115 @@ function assertNotPast(prevList, nextList) {
 
 function newId() {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 10);
+}
+
+/* ------------------------------------------------------------ shop data */
+// بدنهٔ PUT …/data را می‌پاید. داده‌ای که پنل مالک واقعاً می‌فرستد رد نمی‌شود،
+// ولی دیگر یک کلاینت دست‌کاری‌شده نمی‌تواند متن دلخواه، ساعت بی‌ربط یا شناسهٔ تکراری
+// داخل shops.data بگذارد. خروجی همین تابع ذخیره می‌شود، پس فیلدهای ناشناخته هم می‌افتند.
+
+// HH:MM؛ برای پایان نوبت ۲۴:۰۰ هم مجاز است (نوبتی که دقیقاً نیمه‌شب تمام می‌شود)
+function timeStr(v, label, { allowMidnight = false } = {}) {
+  const t = toEn(v);
+  if (TIME_RE.test(t) || (allowMidnight && t === '24:00')) return t;
+  throw new HttpError(400, `${label} باید به شکل HH:MM باشد`);
+}
+
+// روز باید روی تقویم وجود داشته باشد؛ Date.parse تاریخی مثل ۳۰ فوریه را به ماه بعد می‌بَرد
+function dateStr(v) {
+  const s = toEn(v);
+  if (!DATE_RE.test(s)) throw new HttpError(400, 'تاریخ نوبت معتبر نیست');
+  if (new Date(s + 'T00:00:00Z').toISOString().slice(0, 10) !== s) throw new HttpError(400, 'تاریخ نوبت معتبر نیست');
+  return s;
+}
+
+function cleanText(v, max, label) {
+  const s = String(v ?? '').trim();
+  if (s.length > max) throw new HttpError(400, `${label} نباید بیشتر از ${fa(max)} کاراکتر باشد`);
+  return s;
+}
+
+function cleanService(s) {
+  const id = String(s?.id ?? '');
+  if (!ID_RE.test(id)) throw new HttpError(400, 'شناسهٔ خدمت معتبر نیست');
+  const name = cleanText(s?.name, 40, 'نام خدمت');
+  if (!name) throw new HttpError(400, 'نام خدمت را وارد کنید');
+  const minutes = Number(toEn(s?.minutes));
+  if (!Number.isInteger(minutes) || minutes < 5 || minutes > 600) throw new HttpError(400, 'مدت خدمت باید بین ۵ تا ۶۰۰ دقیقه باشد');
+  return { id, name, minutes };
+}
+
+function cleanServiceList(list, max, label) {
+  if (!Array.isArray(list)) throw new HttpError(400, `${label} معتبر نیست`);
+  if (list.length > max) throw new HttpError(400, `تعداد ${label} نباید بیشتر از ${fa(max)} باشد`);
+  const services = list.map(cleanService);
+  if (new Set(services.map((x) => x.id)).size !== services.length) throw new HttpError(400, 'دو خدمت با یک شناسه وجود دارد');
+  return services;
+}
+
+function cleanBarber(b) {
+  const id = String(b?.id ?? '');
+  if (!ID_RE.test(id)) throw new HttpError(400, 'شناسهٔ آرایشگر معتبر نیست');
+  const name = cleanText(b?.name, 40, 'نام آرایشگر');
+  if (!name) throw new HttpError(400, 'نام آرایشگر را وارد کنید');
+  const phone = cleanPhone(b?.phone);
+  if (!phone) throw new HttpError(400, 'شماره تماس آرایشگر معتبر نیست');
+  const hours = {};
+  for (const k of DAY_KEYS) {
+    const h = (b?.hours || {})[k];
+    if (!h) throw new HttpError(400, 'ساعت کاری آرایشگر کامل وارد نشده است');
+    const start = timeStr(h.start, 'ساعت شروع کار');
+    const end = timeStr(h.end, 'ساعت پایان کار');
+    if (h.on && end <= start) throw new HttpError(400, 'ساعت پایان کار باید بعد از ساعت شروع باشد');
+    hours[k] = { on: !!h.on, start, end };
+  }
+  const services = cleanServiceList(b?.services, MAX_SERVICES, 'خدمات آرایشگر');
+  return { id, name, phone, hours, services, ...(b?.owner ? { owner: true } : {}) };
+}
+
+// barber ممکن است برای نوبت قدیمی پیدا نشود (نوبت یتیمی که از قبل در دیتابیس مانده)؛
+// در آن صورت رد نمی‌کنیم چون مالک را در ذخیرهٔ هر چیز دیگری قفل می‌کند — فقط نوبت جدید باید آرایشگر معتبر داشته باشد.
+function cleanAppointment(a, barber, isNew) {
+  const id = String(a?.id ?? '');
+  if (!ID_RE.test(id)) throw new HttpError(400, 'شناسهٔ نوبت معتبر نیست');
+  const barberId = String(a?.barberId ?? '');
+  if (!ID_RE.test(barberId)) throw new HttpError(400, 'شناسهٔ آرایشگر نوبت معتبر نیست');
+  if (isNew && !barber) throw new HttpError(400, 'آرایشگر این نوبت در لیست نیست');
+  const date = dateStr(a?.date);
+  const start = timeStr(a?.start, 'ساعت شروع نوبت');
+  const end = timeStr(a?.end, 'ساعت پایان نوبت', { allowMidnight: true });
+  if (end <= start) throw new HttpError(400, 'ساعت پایان نوبت باید بعد از ساعت شروع باشد');
+  const customerName = cleanText(a?.customerName, 60, 'نام مشتری');
+  if (!customerName) throw new HttpError(400, 'نام مشتری را وارد کنید');
+  const customerPhone = cleanText(toEn(a?.customerPhone), 20, 'شماره مشتری');
+  const services = cleanServiceList(a?.services, MAX_APPT_SERVICES, 'خدمات نوبت');
+  // نوبت جدید هم مثل فرم پنل فقط از خدماتِ همان آرایشگر برداشته می‌شود
+  if (isNew) {
+    const own = new Set((barber?.services || []).map((x) => x.id));
+    if (!services.length || services.some((x) => !own.has(x.id))) throw new HttpError(400, 'خدمات این نوبت در لیست آرایشگر نیست');
+  }
+  const out = { id, barberId, date, start, end, customerName, customerPhone, services };
+  const createdAt = Number(a?.createdAt);
+  if (Number.isFinite(createdAt) && createdAt > 0) out.createdAt = createdAt;
+  return out;
+}
+
+function cleanData(data, prev, role) {
+  if (data.barbers.length > MAX_BARBERS) throw new HttpError(400, `تعداد آرایشگرها نباید بیشتر از ${fa(MAX_BARBERS)} باشد`);
+  if (data.appointments.length > MAX_APPOINTMENTS) throw new HttpError(400, `تعداد نوبت‌ها نباید بیشتر از ${fa(MAX_APPOINTMENTS)} باشد`);
+  const barbers = data.barbers.map(cleanBarber);
+  if (new Set(barbers.map((b) => b.id)).size !== barbers.length) throw new HttpError(400, 'دو آرایشگر با یک شناسه وجود دارد');
+  const ids = new Set();
+  // مرجع آرایشگر برای آرایشگر همان چیزی است که در دیتابیس است؛ لیست ارسالی او دور ریخته می‌شود
+  const barberOf = new Map((role === 'barber' ? prev.barbers : barbers).map((b) => [b.id, b]));
+  const known = new Set(prev.appointments.map((a) => a?.id));
+  const appointments = data.appointments.map((a) => {
+    const appt = cleanAppointment(a, barberOf.get(String(a?.barberId ?? '')), !known.has(String(a?.id ?? '')));
+    if (ids.has(appt.id)) throw new HttpError(400, 'دو نوبت با یک شناسه وجود دارد');
+    ids.add(appt.id);
+    return appt;
+  });
+  return { barbers, appointments };
 }
 
 function cleanUsername(v) {
@@ -767,25 +889,26 @@ async function handleApi(request, env, path) {
         throw new HttpError(400, 'درخواست نامعتبر است');
       }
       if (version !== cur.version) throw new HttpError(409, 'داده‌ها هم‌زمان از دستگاه دیگری تغییر کرده است');
+      const clean = cleanData(data, cur.data, auth.r);
       // آرایشگاه غیرفعال یا منقضی نوبت جدید نمی‌پذیرد (حتی از مدیر سایت)؛ ویرایش و حذف نوبت‌های قبلی آزاد است
       if (!cur.shop.active || cur.shop.sub.state === 'expired') {
         const known = new Set(cur.data.appointments.map((a) => a.id));
-        if (data.appointments.some((a) => !known.has(a.id))) {
+        if (clean.appointments.some((a) => !known.has(a.id))) {
           throw new HttpError(403, 'این آرایشگاه غیرفعال است و نوبت جدید ثبت نمی‌شود');
         }
       }
       let next;
       if (auth.r === 'barber') {
-        // آرایشگر نمی‌تواند آرایشگرها یا نوبت‌های دیگران را تغییر دهد
+        // آرایشگر نمی‌تواند آرایشگرها یا نوبت‌های دیگران را تغییر دهد:
+        // فقط نوبت‌های خودش و نوبت‌های تازه قبول می‌شوند، بقیه دور ریخته می‌شوند
+        const ownerOf = new Map(cur.data.appointments.map((a) => [a.id, a.barberId]));
+        const mine = clean.appointments.filter((a) => a.barberId === auth.b && (!ownerOf.has(a.id) || ownerOf.get(a.id) === auth.b));
         next = {
           barbers: cur.data.barbers,
-          appointments: [
-            ...cur.data.appointments.filter((a) => a.barberId !== auth.b),
-            ...data.appointments.filter((a) => a.barberId === auth.b),
-          ],
+          appointments: [...cur.data.appointments.filter((a) => a.barberId !== auth.b), ...mine],
         };
       } else {
-        next = { barbers: data.barbers, appointments: data.appointments };
+        next = clean;
       }
       assertNotPast(cur.data.appointments, next.appointments);
       const ops = [
