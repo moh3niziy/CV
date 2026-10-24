@@ -437,7 +437,7 @@ function renderTopbar(view) {
   $('.brand').setAttribute('href', view === 'home' ? '#/' : view === 'join' ? '#/join' : shopHref);
   document.title = view === 'home' ? 'آرایشگاه‌ها · نوبت‌دهی آنلاین'
     : view === 'join' ? 'سایت نوبت‌دهی برای آرایشگاه شما'
-    : view === 'admin' ? `پنل مدیریت · ${shopName}` : shopName;
+      : view === 'admin' ? `پنل مدیریت · ${shopName}` : shopName;
   const dark = document.documentElement.dataset.theme === 'dark';
   const themeBtn = `<button class="btn icon-btn" data-action="theme" title="${dark ? 'تم روشن' : 'تم تیره'}" aria-label="تغییر تم">${icon(dark ? 'sun' : 'moon')}</button>`;
   const logoutBtn = `<button class="btn btn-ghost icon-btn" data-action="logout" title="خروج">${icon('logout')}</button>`;
@@ -880,13 +880,13 @@ function renderJoin(from) {
     if (!el || !shops.length) return;
     el.innerHTML = `${icon('store')}<span>هم‌اکنون <b>${fa(shops.length)}</b> آرایشگاه با این سایت نوبت‌دهی ${shops.length > 1 ? 'می‌کنند' : 'می‌کند'}</span>`;
     el.classList.remove('hidden');
-  }).catch(() => {});
+  }).catch(() => { });
 
   // راه‌های تماس از سرور خوانده می‌شود تا فقط یک جا تعریف شوند
   api('GET', '/support').then(({ support }) => {
     const el = $('#joinContactBottom');
     if (el) el.innerHTML = supportHTML(support);
-  }).catch(() => {});
+  }).catch(() => { });
 
   // دکمهٔ ثابت پایین صفحه وقتی دکمه‌های بالای صفحه، فرم یا بخش تماس دیده می‌شوند پنهان می‌شود
   const sticky = $('#joinSticky');
@@ -1010,7 +1010,7 @@ function showOrder({ order, support, payment }) {
   }
   if (stage === 'sent') {
     box.innerHTML = `${head('check', 'ok', 'رسید پرداخت شما دریافت شد',
-      `پس از تأیید پرداخت، سایت «${esc(order.shopName)}» ظرف ${fa(2)} تا ${fa(5)} روز راه‌اندازی می‌شود. اگر تا ۲۴ ساعت آینده تماسی از ما نداشتید، لطفاً خودتان با ما تماس بگیرید:`)}
+      `پس از تأیید پرداخت، سایت «${esc(order.shopName)}» ظرف ${fa(2)} تا ${fa(5)} روز راه‌اندازی می‌شود. اگر تا ۲۴ ساعت آینده تماسی از ما نداشتید، لطفاً با ما تماس بگیرید:`)}
       ${supportHTML(support)}
       <div class="order-summary"><span>${plan.title}</span><b>${toman(order.amount || plan.price)} تومان</b></div>
       <label class="btn btn-block order-again">${icon('plus')}ارسال رسید دیگر<input type="file" accept="image/*" id="receiptFile" hidden></label>
@@ -1251,7 +1251,7 @@ function subBannerHTML() {
   const action = !owner ? `<p>برای تمدید، مالک آرایشگاه از پنل خودش اقدام کند یا با پشتیبانی تماس بگیرید:</p>${supportHTML(state.support)}`
     : pending ? `<p>رسید تمدید شما (پلن ${pending.title}) ارسال شده و در انتظار تأیید است. پس از تأیید، اشتراک خودکار تمدید می‌شود.</p>
       <button class="btn" data-action="renew">${icon('plus')}ارسال رسید دیگر</button>`
-    : `${sub.state === 'expired' ? '' : `<p>${sub.state === 'warning' ? 'برای اینکه نوبت‌دهی قطع نشود' : 'برای فعال شدن دوباره'}، همین حالا اشتراک را تمدید کنید.</p>`}
+      : `${sub.state === 'expired' ? '' : `<p>${sub.state === 'warning' ? 'برای اینکه نوبت‌دهی قطع نشود' : 'برای فعال شدن دوباره'}، همین حالا اشتراک را تمدید کنید.</p>`}
       <button class="btn btn-primary" data-action="renew">${icon('calendar')}تمدید اشتراک</button>`;
   if (sub.state === 'warning') {
     const when = sub.daysLeft === 0 ? 'امروز آخرین روز اشتراک این آرایشگاه است' : `اشتراک این آرایشگاه ${fa(sub.daysLeft)} روز دیگر (${shortDate(sub.expiresAt)}) تمام می‌شود`;
@@ -1356,7 +1356,7 @@ function openRenewModal() {
       <div class="pay-note">${icon('clock')}<span>بعد از واریز، تصویر رسید را انتخاب و ارسال کنید. می‌توانید این پنجره را ببندید و بعداً از همین بنر ادامه دهید.</span></div>
       ${image ? `<img class="receipt-img" src="${image}" alt="رسید پرداخت">
         <label class="btn btn-block" style="margin-top:10px">${icon('edit')}انتخاب تصویر دیگر<input type="file" accept="image/*" id="renewFile" hidden></label>`
-      : `<label class="btn btn-block btn-lg">${icon('plus')}انتخاب تصویر رسید<input type="file" accept="image/*" id="renewFile" hidden></label>`}`;
+        : `<label class="btn btn-block btn-lg">${icon('plus')}انتخاب تصویر رسید<input type="file" accept="image/*" id="renewFile" hidden></label>`}`;
     $('#renewSend').disabled = !image;
     $('#renewFile').addEventListener('change', async (ev) => {
       const file = ev.target.files[0];
@@ -1559,7 +1559,7 @@ function renderAdmin() {
       <div class="admin-head">
         <div class="hero" style="padding:0">
           <h1>${state.role === 'barber' ? 'نوبت‌های من' : 'پنل مدیریت'}</h1>
-          <p>${state.role === 'barber' ? 'نوبت‌های خودتان را ثبت و مدیریت کنید' : state.tab === 'schedule' && barbers.length ? 'نوبت‌های روز را مدیریت کنید' : 'آرایشگرها، ساعت کاری و خدمات'}</p>
+          <p>${state.role === 'barber' ? 'نوبت‌های را ثبت و مدیریت کنید' : state.tab === 'schedule' && barbers.length ? 'نوبت‌های روز را مدیریت کنید' : 'آرایشگرها، ساعت کاری و خدمات'}</p>
         </div>
         ${barbers.length && canManage() ? tabs : ''}
       </div>
