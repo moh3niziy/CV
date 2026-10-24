@@ -619,6 +619,143 @@ const planOverride = await api('POST', '/api/admin/shops', {
 });
 check('پلن انتخابی super بر پلن سفارش مقدم است (بعد از 409 فقط مسیر را چک می‌کنیم)', planOverride.status === 409, planOverride.status);
 
+/* ================================================================ 11b. صفحه‌بندی لیست‌ها و بایگانی رسید */
+section('صفحه‌بندی لیست مدیر سایت و بایگانی تصویر رسید');
+const OLD_MS = Date.now() - 45 * 864e5; // قدیمی‌تر از RECEIPT_IMAGE_DAYS (۳۰ روز)
+// ۶۱۰ درخواست با یک created_at یکسان: اگر صفحه‌بندی فقط تاریخ را ببیند، همین‌جا ردیف گم یا تکراری می‌شود
+await db.batch([...Array(610)].map((_, i) => db.prepare(
+  'INSERT INTO leads (id, name, phone, note, status, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+  .bind('ld' + i, 'درخواست دسته‌ای ' + i, `0912${String(7000000 + i)}`, '', 'new', OLD_MS)));
+const leadCount = db.prepare('SELECT COUNT(*) AS n FROM leads').first().n;
+const lPage1 = await api('GET', '/api/admin/leads', { token: superToken });
+check('صفحهٔ اول ۳۰۰ ردیف است و more:true', lPage1.json?.leads?.length === 300 && lPage1.json?.more === true, lPage1.json?.leads?.length);
+check('شمار کل ردیف‌ها را می‌دهد', lPage1.json?.total === leadCount, { total: lPage1.json?.total, leadCount });
+const seenLeads = new Set((lPage1.json?.leads || []).map((l) => l.id));
+let cursor = lPage1.json.leads[lPage1.json.leads.length - 1];
+let more = lPage1.json.more;
+let extraPages = 0;
+while (more && extraPages < 10) {
+  const nxt = await api('GET', `/api/admin/leads?before=${cursor.createdAt}&beforeId=${encodeURIComponent(cursor.id)}`, { token: superToken });
+  const rows = nxt.json?.leads || [];
+  rows.forEach((l) => seenLeads.add(l.id));
+  more = !!nxt.json?.more;
+  cursor = rows[rows.length - 1];
+  extraPages++;
+  if (more && !rows.length) check('صفحهٔ خالی با more:true نباید باشد', false, nxt.json);
+}
+check('همهٔ ردیف‌ها بدون تکرار و بدون جاافتادنی پیموده می‌شوند', seenLeads.size === leadCount, { seen: seenLeads.size, leadCount });
+check('برای این‌همه ردیف بیش از یک صفحه لازم است', extraPages >= 2, extraPages);
+const lLimit = await api('GET', '/api/admin/leads?limit=9999', { token: superToken });
+check('limit از ۵۰۰ بیشتر نمی‌شود', lLimit.json?.leads?.length === 500 && lLimit.json?.more === true, lLimit.json?.leads?.length);
+const lJunk = await api('GET', '/api/admin/leads?before=abc&beforeId=%27%20OR%201%3D1%20--', { token: superToken });
+check('پارامتر بی‌اعتبار صفحهٔ اول را برمی‌گرداند و تزریق نمی‌شود', lJunk.status === 200 && lJunk.json?.leads?.length === 300 && lJunk.json?.total === leadCount, { st: lJunk.status, n: lJunk.json?.leads?.length, total: lJunk.json?.total });
+// نشانِ تب باید تعدادِ ردیف‌های بازِ کل جدول را بدهد، نه فقط صفحهٔ اول
+const openLeads = db.prepare("SELECT COUNT(*) AS n FROM leads WHERE status IN ('new','paid')").first().n;
+check('شمار درخواست‌های باز از کل جدول است (نه صفحهٔ اول)', lPage1.json?.open === openLeads && openLeads > lPage1.json.leads.length, { open: lPage1.json?.open, openLeads });
+
+// چهار رسید برای قانون بایگانی: بررسی‌شدهٔ قدیمی پاک می‌شود، در انتظار بررسی و تازه دست نمی‌خورد
+await db.batch([
+  db.prepare('INSERT INTO receipts (id, lead_id, shop_id, plan, amount, image, status, created_at) VALUES (?, NULL, ?, 1, 500000, ?, ?, ?)')
+    .bind('rcOldDone', shopId, RECEIPT, 'done', OLD_MS),
+  db.prepare('INSERT INTO receipts (id, lead_id, shop_id, plan, amount, image, status, created_at) VALUES (?, NULL, ?, 1, 500000, ?, ?, ?)')
+    .bind('rcOldWait', shopId, RECEIPT, 'new', OLD_MS),
+  db.prepare('INSERT INTO receipts (id, lead_id, shop_id, plan, amount, image, status, created_at) VALUES (?, NULL, ?, 1, 500000, ?, ?, ?)')
+    .bind('rcFreshDone', shopId, RECEIPT, 'done', Date.now()),
+  db.prepare('INSERT INTO receipts (id, lead_id, shop_id, plan, amount, image, status, created_at) VALUES (?, ?, NULL, 1, 500000, ?, ?, ?)')
+    .bind('rcLeadDone', myLead.id, RECEIPT, 'new', OLD_MS),
+]);
+const rPage = await api('GET', '/api/admin/renewals?limit=2', { token: superToken });
+check('لیست تمدیدها هم صفحه‌ای است (limit=2 و more)', rPage.json?.renewals?.length === 2 && rPage.json?.more === true, rPage.json?.renewals?.length);
+const rCursor = rPage.json.renewals[rPage.json.renewals.length - 1];
+const rPage2 = await api('GET', `/api/admin/renewals?limit=2&before=${rCursor.createdAt}&beforeId=${encodeURIComponent(rCursor.id)}`, { token: superToken });
+const overlap = (rPage.json?.renewals || []).filter((a) => (rPage2.json?.renewals || []).some((b) => b.id === a.id));
+check('صفحهٔ دوم رسیدها با مکانِ آخرین ردیف می‌آید و تکراری ندارد', rPage2.json?.renewals?.length === 2 && overlap.length === 0, overlap);
+const imageOf = (id) => db.prepare('SELECT image FROM receipts WHERE id = ?').bind(id).first()?.image;
+check('رسید بررسی‌شدهٔ قدیمی بی‌تصویر شد', imageOf('rcOldDone') === '', imageOf('rcOldDone')?.length);
+check('ردیف بی‌تصویر با مبلغ و وضعیتش ماند', db.prepare('SELECT amount, status FROM receipts WHERE id = ?').bind('rcOldDone').first()?.amount === 500000, 'rcOldDone');
+check('رسید قدیمیِ در انتظار بررسی دست‌نخورده ماند', imageOf('rcOldWait') === RECEIPT);
+check('رسید تازه پاک نشد', imageOf('rcFreshDone') === RECEIPT);
+check('تصویر رسیدِ سفارشِ ساخته‌شده هم بایگانی شد', imageOf('rcLeadDone') === '', imageOf('rcLeadDone')?.length);
+const archivedImg = await api('GET', '/api/admin/receipts/rcOldDone', { token: superToken });
+check('تصویر بایگانی‌شده → 410 با پیام فارسی', archivedImg.status === 410 && /بایگانی/.test(archivedImg.json?.error || ''), archivedImg.json);
+const liveImg = await api('GET', '/api/admin/receipts/rcFreshDone', { token: superToken });
+check('تصویر رسید تازه سرجایش می‌ماند', liveImg.status === 200 && liveImg.json?.image === RECEIPT, liveImg.status);
+const listAll = await api('GET', '/api/admin/renewals?limit=500', { token: superToken });
+const byId = (id) => (listAll.json?.renewals || []).find((x) => x.id === id);
+check('لیست تمدیدها hasImage=0 را برای رسید بایگانی‌شده می‌دهد', byId('rcOldDone')?.hasImage === 0, byId('rcOldDone'));
+check('لیست تمدیدها hasImage=1 را برای رسید تازه می‌دهد', byId('rcFreshDone')?.hasImage === 1, byId('rcFreshDone'));
+check('شمار کل رسیدها هم در پاسخ هست', listAll.json?.total === (listAll.json?.renewals || []).length, { total: listAll.json?.total, n: listAll.json?.renewals?.length });
+const openReceipts = db.prepare("SELECT COUNT(*) AS n FROM receipts WHERE shop_id IS NOT NULL AND status = 'new'").first().n;
+check('شمار رسیدهای بررسی‌نشده از کل جدول است', listAll.json?.open === openReceipts, { open: listAll.json?.open, openReceipts });
+const leadPaged = (await api('GET', '/api/admin/leads?limit=500', { token: superToken })).json?.leads?.find((x) => x.id === myLead.id);
+check('لیست درخواست‌ها پرچمِ تصویر رسیدِ همان ردیف را درست می‌زند', !!leadPaged
+  && leadPaged.hasReceiptImage === (imageOf(leadPaged.receiptId) === '' ? 0 : 1), { flag: leadPaged?.hasReceiptImage, receipt: leadPaged?.receiptId });
+
+/* ================================================================ 11c. سرد-استارت با طرحوارهٔ به‌روز */
+section('migrate روی طرحوارهٔ به‌روز از ALTERهای تکراری رد می‌شود');
+// دیتابیس و ماژول جدا: ready و secret سطح-ماژول‌اند، پس با یک کوئری تازه روی مسیر import
+// نسخهٔ مستقلی از worker می‌گیریم که سرد-استارت را دوباره از اول تجربه می‌کند.
+class CountingD1 extends MockD1 {
+  constructor() { super(); this.alters = 0; }
+  prepare(sql) { if (/ALTER TABLE/.test(sql)) this.alters++; return super.prepare(sql); }
+}
+const coldDb = new CountingD1();
+const coldEnv = { DB: coldDb, ASSETS, ADMIN_USERNAME: SUPER_USER, ADMIN_PASSWORD: SUPER_PASS };
+// همان قالب api() ولی روی instance و دیتابیس سرد-استارت
+async function coldCall(mod, path, { method = 'GET', body, token } = {}) {
+  const request = new Request(new URL(path, 'https://hairdresser.test'), {
+    method,
+    headers: new Headers({ 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) }),
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const res = await mod.fetch(request, coldEnv);
+  return { status: res.status, json: await res.json().catch(() => null) };
+}
+
+const cold1 = (await import('../worker.js?cold=1')).default;
+const plans1 = await coldCall(cold1, '/api/plans');
+check('سرد-استارت اول روی پایگاه‌دادهٔ تازه چهارده ALTER می‌زند', coldDb.alters === 14 && plans1.status === 200, { alters: coldDb.alters, st: plans1.status });
+check('شمارهٔ طرحواره در meta نوشته می‌شود', coldDb.prepare("SELECT value FROM meta WHERE key = 'schema'").first()?.value === '1', coldDb.prepare("SELECT value FROM meta WHERE key = 'schema'").first());
+
+coldDb.alters = 0;
+const cold2 = (await import('../worker.js?cold=2')).default;
+const login2 = await coldCall(cold2, '/api/login', { method: 'POST', body: { username: SUPER_USER, password: SUPER_PASS } });
+const coldToken = login2.json?.token;
+check('سرد-استارت دوم روی همان دیتابیس هیچ ALTER نمی‌زند', coldDb.alters === 0, coldDb.alters);
+check('سرد-استارت دوم ورود مدیر را کار می‌کند (کلید امضا خوانده شده)', login2.status === 200 && !!coldToken, login2.json);
+// مسیرهای پرکار روی همان instance: ثابت می‌کند رد شدن از ALTERها ستونی را که سرور لازم دارد کم نیاورده
+const mkCold = await coldCall(cold2, '/api/admin/shops', {
+  method: 'POST', token: coldToken,
+  body: { name: 'آرایشگاه سرد', location: 'ساری', ownerUsername: 'coldowner', ownerPassword: 'pass1234', plan: 3 },
+});
+check('سرد-استارت دوم آرایشگاه می‌سازد (ستون‌های expires_at و active موجودند)', mkCold.status === 200 && !!mkCold.json?.id, mkCold.json);
+const listCold = await coldCall(cold2, '/api/shops', { token: coldToken });
+const coldShop = (listCold.json?.shops || []).find((x) => x.id === mkCold.json?.id);
+check('سرد-استارت دوم اشتراک را درست می‌خواند', coldShop?.sub?.state === 'active' && coldShop?.sub?.expiresAt === addDays(tehranDate(), 90), coldShop?.sub);
+const coldOwner = await coldCall(cold2, `/api/shops/${mkCold.json?.id}/login`, { method: 'POST', body: { username: 'coldowner', password: 'pass1234' } });
+check('سرد-استارت دوم ورود مالک را هم کار می‌کند', coldOwner.status === 200 && coldOwner.json?.role === 'owner', coldOwner.json);
+check('سرد-استارت دوم همچنان ALTER نمی‌زند', coldDb.alters === 0, coldDb.alters);
+
+// isolate سوم (همان دیتابیس، ماژول تازه): اگر مسیر سریع کلید امضا را از meta نخواند،
+// توکن‌هایش فقط در همان isolate کار می‌کنند و این بررسی می‌شکند.
+coldDb.alters = 0;
+const cold3 = (await import('../worker.js?cold=3')).default;
+const crossAdmin = await coldCall(cold3, '/api/shops', { token: coldToken });
+check('توکن مدیرِ ساخته‌شده در isolate دیگر همان دیتابیس هم معتبر است', crossAdmin.status === 200
+  && (crossAdmin.json?.shops || []).some((x) => x.id === mkCold.json?.id), crossAdmin.json);
+const crossOwner = await coldCall(cold3, `/api/admin/shops/${mkCold.json?.id}/data`, { token: coldOwner.json?.token });
+check('توکن مالک هم بین دو isolate می‌چرخد', crossOwner.status === 200 && crossOwner.json?.role === 'owner', crossOwner.json);
+check('سرد-استارت سوم هم هیچ ALTER نمی‌زند', coldDb.alters === 0, coldDb.alters);
+
+// اگر مسیر سریع کلید را از meta می‌خواند، عوض کردن کلید در دیتابیس باید توکن‌های قبلی را باطل کند؛
+// با یک کلید ثابتِ درون‌کد (مثل secret = null روی همین مسیر) این بررسی می‌شکند.
+coldDb.prepare("UPDATE meta SET value = ? WHERE key = 'secret'").bind('newkey-000000000000000000000000000000000000000000000000000000000000').run();
+coldDb.alters = 0;
+const cold4 = (await import('../worker.js?cold=4')).default;
+const afterKeyTurn = await coldCall(cold4, `/api/admin/shops/${mkCold.json?.id}/data`, { token: coldOwner.json?.token });
+check('توکنِ کلید قدیمی بعد از عوض شدن کلید در meta رد می‌شود', afterKeyTurn.status === 401, afterKeyTurn.json);
+check('سرد-استارت چهارم هم هیچ ALTER نمی‌زند', coldDb.alters === 0, coldDb.alters);
+
 /* ================================================================ 12. حذف و مسیرهای نامعلوم */
 section('حذف و 404');
 const delShop = await api('DELETE', `/api/admin/shops/${otherId}`, { token: ownerToken });

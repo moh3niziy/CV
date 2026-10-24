@@ -41,6 +41,11 @@ const DEFAULT_PLANS = [
 const MAX_RECEIPT = 900 * 1024;   // حداکثر حجم تصویر رسید (data URL، بعد از کوچک‌شدن در مرورگر)
 const MAX_RECEIPTS_PER_LEAD = 5;
 const LEAD_STATUSES = ['new', 'contacted', 'paid', 'done', 'rejected'];
+// سقف رسید بررسی‌شده‌ای که تصویرش در دیتابیس می‌ماند؛ بعد از آن فقط رکورد و مبلغ می‌ماند
+const RECEIPT_IMAGE_DAYS = 30;
+// صفحه‌بندی لیست‌های مدیر سایت: هر بار همین‌قدر ردیف، با سقف قابل‌درخواست
+const ADMIN_PAGE = 300;
+const ADMIN_PAGE_MAX = 500;
 
 // سقف‌های دادهٔ آرایشگاه؛ همان اندازه‌هایی که پنل مالک در فرم‌ها دارد را حالا سرور هم الزامی می‌کند
 const MAX_BARBERS = 40;
@@ -105,6 +110,9 @@ async function hmac(secret, data) {
 }
 
 /* ---------------------------------------------------------------- schema */
+// هر ستون تازه‌ای که به فهرست ALTER داخل migrate اضافه می‌شود باید این شماره را هم یکی جلو ببرد؛
+// اگر نشود، پایگاه‌داده‌های به‌روز آن ستون را هرگز نمی‌گیرند چون migrate زودتر بیرون می‌زند.
+const SCHEMA_VERSION = 1;
 let ready = null;
 let secret = null;
 function init(db) {
@@ -134,6 +142,10 @@ async function migrate(db) {
     db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('secret', ?)").bind(randomHex(32)),
   ]);
   secret = (await db.prepare("SELECT value FROM meta WHERE key = 'secret'").first()).value;
+  // شمارهٔ نسخه در meta یعنی «این پایگاه‌داده قبلاً به‌روز شده»؛ با آن، سرد-استارت از چهارده
+  // بار سعیِ بی‌نتیجهٔ ALTER و خواندن sqlite_master و به‌روزرانش expires_at رد می‌شود.
+  const version = await db.prepare("SELECT value FROM meta WHERE key = 'schema'").first();
+  if (Number(version?.value) === SCHEMA_VERSION) return;
   // ستون‌هایی که بعداً اضافه شده‌اند
   for (const [table, col] of [['shops', 'active INTEGER NOT NULL DEFAULT 1'], ['shops', "telegram TEXT NOT NULL DEFAULT ''"],
     ['shops', "instagram TEXT NOT NULL DEFAULT ''"], ['shops', "expires_at TEXT NOT NULL DEFAULT ''"],
@@ -162,6 +174,8 @@ async function migrate(db) {
 
   // آرایشگاه‌هایی که از قبل بوده‌اند هم از امروز ۳۰ روز اشتراک رایگان می‌گیرند
   await db.prepare("UPDATE shops SET expires_at = ? WHERE expires_at = ''").bind(addDaysISO(localNow().date, FREE_DAYS)).run();
+  // آخرین قدم: شمارهٔ نسخه. اگر مهاجرتی میانهٔ راه بشکند این نوشته نمی‌شود و درخواست بعدی از نو اجرا می‌کند
+  await db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?)").bind(String(SCHEMA_VERSION)).run();
 }
 
 /* ---------------------------------------------------------------- auth */
@@ -275,6 +289,36 @@ function localNow() {
 
 const addDaysISO = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
 const diffDays = (from, to) => Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 864e5);
+
+// صفحه‌بندی لیست‌های مدیر سایت: ?before=<ms>&beforeId=<id> یعنی ردیف‌های قدیمی‌تر از این مکان،
+// و ?limit= تا سقف ADMIN_PAGE_MAX. به‌جای OFFSET از (created_at,id) کلید می‌گیریم تا ردیف‌های
+// هم‌زمان (چند lead در یک میلی‌ثانیه) گم یا دوباره نشوند و صفحه‌ها با ورود دادهٔ جدید جابه‌جا نشود.
+function pageParams(request) {
+  const q = new URL(request.url).searchParams;
+  const before = Math.trunc(Number(toEn(q.get('before'))));
+  const beforeId = String(q.get('beforeId') || '').slice(0, 40);
+  const limit = Math.trunc(Number(toEn(q.get('limit'))));
+  return {
+    before: Number.isFinite(before) && before > 0 && beforeId ? before : null,
+    beforeId: before > 0 && beforeId ? beforeId : null,
+    limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, ADMIN_PAGE_MAX) : ADMIN_PAGE,
+  };
+}
+// شرط کلیدصفحه و پارامترهایش؛ وقتی مکانی داده نشده صفحهٔ اول از نو خوانده می‌شود
+const pageCursor = (table, p) => ({
+  limit: p.limit,
+  where: p.before ? `(${table}.created_at < ? OR (${table}.created_at = ? AND ${table}.id < ?))` : '',
+  args: p.before ? [p.before, p.before, p.beforeId] : [],
+});
+
+// رسیدی که دیگر کاری با آن نیست فقط تاریخچه است: متن base64 تصویرش پاک می‌شود تا جدول رشد نکند،
+// ولی خود ردیف (مبلغ، پلن، وضعیت) برای حسابداری می‌ماند. «دیگر کاری نیست» یعنی یا رسید تمدید
+// بررسی شده، یا سفارش آن رسید به «ساخته شد»/«منصرف شد» رسیده — رسیدِ در انتظار بررسی دست نمی‌خورد.
+async function purgeOldReceiptImages(db) {
+  await db.prepare(`UPDATE receipts SET image = ? WHERE image <> ? AND created_at < ?
+    AND (status IN (?, ?) OR EXISTS (SELECT 1 FROM leads l WHERE l.id = receipts.lead_id AND l.status IN (?, ?)))`)
+    .bind('', '', Date.now() - RECEIPT_IMAGE_DAYS * 864e5, 'done', 'rejected', 'done', 'rejected').run();
+}
 
 // وضعیت اشتراک بر اساس تاریخ ایران. expiresAt آخرین روز اشتراک است (همان روز هنوز فعال است).
 function subStatus(expiresAt) {
@@ -734,10 +778,23 @@ async function handleApi(request, env, path) {
     if (auth.r !== 'super') throw new HttpError(403, 'به این بخش دسترسی ندارید');
     const rid = parts[2];
     if (method === 'GET' && !rid) {
+      await purgeOldReceiptImages(db);
+      const p = pageCursor('r', pageParams(request));
       const { results } = await db.prepare(`SELECT r.id, r.shop_id AS shopId, r.plan, r.amount, r.status, r.created_at AS createdAt,
+        (r.image <> '') AS hasImage,
         s.name AS shopName, s.expires_at AS expiresAt FROM receipts r LEFT JOIN shops s ON s.id = r.shop_id
-        WHERE r.shop_id IS NOT NULL ORDER BY r.created_at DESC LIMIT 300`).all();
-      return json({ renewals: results.map(({ expiresAt, ...r }) => ({ ...r, sub: expiresAt != null ? subStatus(expiresAt) : null })) });
+        WHERE r.shop_id IS NOT NULL${p.where ? ` AND ${p.where}` : ''}
+        ORDER BY r.created_at DESC, r.id DESC LIMIT ?`).bind(...p.args, p.limit + 1).all();
+      // n = همهٔ ردیف‌ها (برای شمار «از چند تا») · open = ردیف‌های بررسی‌نشده در کل جدول،
+      // چون شمارشان روی صفحهٔ اول وقتی لیست صفحه‌ای شده دیگر درست نیست
+      const total = await db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(status = 'new'), 0) AS open FROM receipts WHERE shop_id IS NOT NULL").first();
+      return json({
+        renewals: results.slice(0, p.limit).map(({ expiresAt, ...r }) => ({ ...r, sub: expiresAt != null ? subStatus(expiresAt) : null })),
+        total: total.n,
+        open: total.open,
+        // یکی بیشتر از صفحه خوانده می‌شود؛ اگر آمده یعنی ردیف کمتری هنوز هست
+        more: results.length > p.limit,
+      });
     }
     // تأیید: اشتراک به اندازهٔ پلن (هر ماه ۳۰ روز) از پایان فعلی یا از امروز تمدید می‌شود · رد: فقط وضعیت رسید
     if (method === 'PUT' && rid && parts.length === 3) {
@@ -770,6 +827,7 @@ async function handleApi(request, env, path) {
     if (auth.r !== 'super') throw new HttpError(403, 'به این بخش دسترسی ندارید');
     const row = await db.prepare('SELECT image FROM receipts WHERE id = ?').bind(parts[2]).first();
     if (!row) throw new HttpError(404, 'رسید پیدا نشد');
+    if (!row.image) throw new HttpError(410, `تصویر این رسید بعد از ${fa(RECEIPT_IMAGE_DAYS)} روز بایگانی شده و از دیتابیس پاک رفته است؛ خود ردیف و مبلغش در لیست تمدیدها باقی مانده`);
     return json({ image: row.image });
   }
 
@@ -779,14 +837,19 @@ async function handleApi(request, env, path) {
     if (auth.r !== 'super') throw new HttpError(403, 'به این بخش دسترسی ندارید');
     const leadId = parts[2];
     if (method === 'GET' && !leadId) {
+      // hasReceiptImage وضعیت تصویرِ همان رسیدِ receiptId است (۰ یعنی بایگانی و پاک شده)
+      const p = pageCursor('l', pageParams(request));
       const { results } = await db.prepare(`SELECT l.id, l.name, l.phone, l.shop_name AS shopName, l.city, l.note, l.plan, l.amount, l.status, l.created_at AS createdAt,
         (SELECT r.id FROM receipts r WHERE r.lead_id = l.id ORDER BY r.created_at DESC LIMIT 1) AS receiptId,
         (SELECT COUNT(*) FROM receipts r WHERE r.lead_id = l.id) AS receipts,
+        (SELECT r.image <> '' FROM receipts r WHERE r.lead_id = l.id ORDER BY r.created_at DESC LIMIT 1) AS hasReceiptImage,
         l.source_shop AS sourceShop, s.name AS sourceName,
         (SELECT c.id FROM shops c WHERE c.id = l.shop_id) AS shopId
         FROM leads l LEFT JOIN shops s ON s.id = l.source_shop
-        ORDER BY l.created_at DESC LIMIT 300`).all();
-      return json({ leads: results });
+        ${p.where ? `WHERE ${p.where}` : ''} ORDER BY l.created_at DESC, l.id DESC LIMIT ?`).bind(...p.args, p.limit + 1).all();
+      // open مثل لیست تمدیدها از کل جدول شمرده می‌شود تا نشانِ تازه‌ها صفحه‌ای و کم نشود
+      const total = await db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(status IN ('new', 'paid')), 0) AS open FROM leads").first();
+      return json({ leads: results.slice(0, p.limit), total: total.n, open: total.open, more: results.length > p.limit });
     }
     if (method === 'PUT' && leadId) {
       const { status } = await readJson(request);

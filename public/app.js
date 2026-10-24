@@ -122,6 +122,12 @@ const state = {
   date: todayISO(),
   stripStart: todayISO(),
   tab: 'schedule',
+  leadsMore: false,      // آیا درخواست قدیمی‌تر از بارگذاری‌شده‌ها وجود دارد
+  renewalsMore: false,
+  leadsTotal: 0,         // شمار کل ردیف‌ها (نه فقط صفحات باز شده)
+  renewalsTotal: 0,
+  leadsOpen: 0,          // درخواست‌های «نو/پرداخت‌شده» در کل جدول، برای نشانِ سرِ تب
+  renewalsOpen: 0,
 };
 
 class AppError extends Error { }
@@ -171,6 +177,25 @@ const shopPath = () => `/admin/shops/${encodeURIComponent(state.shopId)}`;
 
 async function loadShops() {
   state.shops = (await api('GET', '/shops')).shops;
+}
+
+// لیست‌های پنل مدیر سایت صفحه‌به‌صفحه خوانده می‌شوند (سرور ۳۰۰ تا در هر صفحه می‌دهد).
+// «بیشتر» با مکانِ آخرین ردیفِ باز شده صفحهٔ بعد را می‌گیرد و به انتهای لیست می‌چسباند؛
+// رفرش خودکار هم همان تعداد ردیف را یک‌جا می‌خواهد تا صفحه‌های باز شده با تایمر ۳ دقیقه‌ای گم نشوند.
+const ADMIN_PAGE = 300;
+// وضعیتی که هنوز کاری روی آن باقی است (همان چیزی که سرور با SUM می‌شمارد)
+const LEAD_OPEN = (s) => s === 'new' || s === 'paid';
+async function loadAdminList(kind, older) {
+  const list = state[kind] || [];
+  const last = older && list.length ? list[list.length - 1] : null;
+  const q = [];
+  if (last) q.push(`before=${last.createdAt}`, `beforeId=${encodeURIComponent(last.id)}`);
+  else if (!older && list.length) q.push(`limit=${Math.min(500, Math.max(ADMIN_PAGE, list.length))}`);
+  const res = await api('GET', `/admin/${kind}${q.length ? '?' + q.join('&') : ''}`);
+  state[kind] = last ? list.concat(res[kind]) : res[kind];
+  state[`${kind}Total`] = res.total;
+  state[`${kind}Open`] = res.open;
+  state[`${kind}More`] = !!res.more;
 }
 
 async function loadAdmin() {
@@ -554,8 +579,9 @@ function renderHome() {
 
   const tab = isSuper() ? state.homeTab || 'shops' : 'shops';
   const leadsTab = tab === 'leads';
-  const newLeads = (state.leads || []).filter((l) => l.status === 'new' || l.status === 'paid').length;
-  const newRenewals = (state.renewals || []).filter((r) => r.status === 'new').length;
+  // نشانِ تب از شمارِ کلِ ردیف‌های باز در سرور می‌آید؛ شماردن روی صفحهٔ اول، لیست صفحه‌ای را کم نشان می‌دهد
+  const newLeads = state.leadsOpen;
+  const newRenewals = state.renewalsOpen;
   const heads = {
     shops: ['آرایشگاه موردنظر را انتخاب کنید', 'زمان‌های خالی هر آرایشگاه را ببینید و برای رزرو تماس بگیرید.'],
     leads: ['درخواست‌های ساخت سایت', 'افرادی که از صفحهٔ «تو هم می‌خواهی؟» درخواست داده‌اند.'],
@@ -1138,6 +1164,21 @@ async function copyText(text) {
 
 // رسیدهای تمدید در پنل مدیر سایت
 const RENEW_STATUS = { new: 'در انتظار بررسی', done: 'تأیید و تمدید شد', rejected: 'رد شد' };
+// پایین هر لیست: چند ردیف از کل باز شده و دکمهٔ صفحهٔ بعد؛ سرور «more» را می‌فرستد نه شمارشِ خودمان
+function listFootHTML(kind, label) {
+  const loaded = (state[kind] || []).length;
+  const total = state[`${kind}Total`] || 0;
+  if (!loaded) return '';
+  return `<div class="list-foot">
+    <span class="muted" style="font-size:13px">${fa(loaded)} ${label} از ${fa(total)} نشان داده شده است.</span>
+    ${state[`${kind}More`] ? `<button class="btn" data-action="more-${kind}">${icon('list')}نمایش مورد‌های قدیمی‌تر</button>` : ''}
+  </div>`;
+}
+// تصویر رسیدهای قدیمی از دیتابیس پاک می‌شود؛ جایش پیام می‌نشیند نه دکمهٔ بی‌مصرف
+const receiptViewBtn = (id, hasImage, label) => (hasImage
+  ? `<button class="btn" data-action="view-receipt" data-id="${esc(id)}">${icon('eye')}${label}</button>`
+  : `<span class="muted" style="font-size:13px">${icon('lock')}تصویر این رسید بایگانی شده است</span>`);
+
 function renewalsHTML() {
   const list = state.renewals || [];
   if (!list.length) {
@@ -1154,13 +1195,13 @@ function renewalsHTML() {
       ${p ? `<div class="lead-plan">${icon('calendar')}<span>پلن ${p.title}، ${toman(r.amount || p.price)} تومان</span></div>` : ''}
       ${r.sub ? `<div class="lead-plan">${icon('clock')}<span>اشتراک فعلی:</span> ${subBadgeHTML(r.sub)}</div>` : ''}
       <div class="renew-actions">
-        <button class="btn" data-action="view-receipt" data-id="${esc(r.id)}">${icon('eye')}مشاهدهٔ رسید</button>
+        ${receiptViewBtn(r.id, !!r.hasImage, 'مشاهدهٔ رسید')}
         ${r.status === 'new' && r.shopName ? `
           <button class="btn btn-primary" data-action="renew-approve" data-id="${esc(r.id)}">${icon('check')}تأیید و تمدید</button>
           <button class="btn btn-danger" data-action="renew-reject" data-id="${esc(r.id)}">${icon('x')}رد</button>` : ''}
       </div>
     </div>`;
-  }).join('')}</div>`;
+  }).join('')}</div>${listFootHTML('renewals', 'رسید')}`;
 }
 
 // لیست درخواست‌ها در پنل مدیر سایت
@@ -1184,7 +1225,7 @@ function leadsHTML() {
         <a class="btn" href="sms:${esc(l.phone)}">${icon('chat')}پیامک</a>
       </div>
       ${planOf(l.plan) ? `<div class="lead-plan lead-plan-main">${icon('calendar')}<span>پلن انتخابی: <b>${planOf(l.plan).title}</b>، ${toman(l.amount || planOf(l.plan).price)} تومان</span></div>` : ''}
-      ${l.receiptId ? `<button class="btn lead-receipt" data-action="view-receipt" data-id="${esc(l.receiptId)}">${icon('eye')}مشاهدهٔ رسید پرداخت${l.receipts > 1 ? ` <small>(${fa(l.receipts)} رسید، آخرین)</small>` : ''}</button>` : ''}
+      ${l.receiptId ? `<div class="lead-receipt">${receiptViewBtn(l.receiptId, !!l.hasReceiptImage, `مشاهدهٔ رسید پرداخت${l.receipts > 1 ? ` <small>(${fa(l.receipts)} رسید، آخرین)</small>` : ''}`)}</div>` : ''}
       ${l.note ? `<p class="lead-note">${esc(l.note)}</p>` : ''}
       ${l.shopId ? `<a class="btn lead-receipt" href="#/s/${encodeURIComponent(l.shopId)}/admin">${icon('store')}باز کردن آرایشگاه ساخته‌شده</a>`
         : `<button class="btn ${l.status === 'paid' ? 'btn-primary' : ''} lead-receipt" data-action="lead-shop" data-id="${esc(l.id)}">${icon('plus')}ساخت آرایشگاه با این اطلاعات</button>`}
@@ -1194,7 +1235,7 @@ function leadsHTML() {
         <button class="btn icon-btn sm btn-danger" data-action="del-lead" data-id="${esc(l.id)}" title="حذف">${icon('trash')}</button>
       </div>
     </div>`;
-  }).join('')}</div>`;
+  }).join('')}</div>${listFootHTML('leads', 'درخواست')}`;
 }
 
 /* ================================================================ login */
@@ -2216,11 +2257,29 @@ document.addEventListener('click', async (ev) => {
     case 'home-tab':
       state.homeTab = el.dataset.tab;
       return render(false);
+    case 'more-leads':
+    case 'more-renewals': {
+      const kind = action === 'more-leads' ? 'leads' : 'renewals';
+      el.disabled = true;
+      try {
+        await loadAdminList(kind, true);
+        renderHome();
+      } catch (err) {
+        el.disabled = false;
+        toast(err.message, true);
+      }
+      return;
+    }
     case 'lead-status': {
       try {
         await api('PUT', `/admin/leads/${encodeURIComponent(el.dataset.id)}`, { status: el.dataset.status });
         const l = state.leads.find((x) => x.id === el.dataset.id);
-        if (l) l.status = el.dataset.status;
+        if (l) {
+          // نشانِ تب بدون رفتن به سرور هم درست بماند: یکی کم، یکی زیاد
+          const was = LEAD_OPEN(l.status), nowOpen = LEAD_OPEN(el.dataset.status);
+          if (was !== nowOpen) state.leadsOpen = Math.max(0, state.leadsOpen + (nowOpen ? 1 : -1));
+          l.status = el.dataset.status;
+        }
         renderHome();
       } catch (err) { toast(err.message, true); }
       return;
@@ -2231,6 +2290,8 @@ document.addEventListener('click', async (ev) => {
       try {
         await api('DELETE', `/admin/leads/${encodeURIComponent(l.id)}`);
         state.leads = state.leads.filter((x) => x.id !== l.id);
+        state.leadsTotal = Math.max(0, (state.leadsTotal || 1) - 1); // شمار پایین لیست با ردیف حذف‌شده هم‌خوان بماند
+        if (LEAD_OPEN(l.status)) state.leadsOpen = Math.max(0, state.leadsOpen - 1);
         toast('درخواست حذف شد'); renderHome();
       } catch (err) { toast(err.message, true); }
       return;
@@ -2421,8 +2482,8 @@ async function render(reload = true) {
     if (r.view === 'join') { renderJoin(r.from); return; }
     if (r.view === 'home') {
       if (reload || !state.shops) await loadShops();
-      if (isSuper() && (reload || !state.leads)) state.leads = (await api('GET', '/admin/leads')).leads;
-      if (isSuper() && (reload || !state.renewals)) state.renewals = (await api('GET', '/admin/renewals')).renewals;
+      if (isSuper() && (reload || !state.leads)) await loadAdminList('leads', false);
+      if (isSuper() && (reload || !state.renewals)) await loadAdminList('renewals', false);
       renderHome();
       if (r.adminEntry && !isSuper() && !state.adminEntryShown) { state.adminEntryShown = true; openLogin('#/'); }
       return;
