@@ -220,6 +220,55 @@ check('نام کاربری فارسی → 400', badUsername.status === 400, badU
 const shortPass = await api('PUT', `/api/admin/shops/${shopId}/accounts/b2`, { token: ownerToken, body: { username: 'ok_user', password: '123' } });
 check('رمز کوتاه → 400', shortPass.status === 400, shortPass.json);
 
+/* ================================================================ 3b. سهمیهٔ تلاش ورود */
+section('سهمیهٔ تلاش ورود (rate limit)');
+const loginTry = (path, username, password, ip) =>
+  api('POST', path, { body: { username, password }, headers: ip ? { 'cf-connecting-ip': ip } : {} });
+
+// سقف ۱۰ تلاش: تا پر شدن آستانه فقط 401 برمی‌گردد، نه 429
+const failIps = [];
+for (let i = 1; i <= 10; i++) {
+  const r = await loginTry(`/api/shops/${shopId}/login`, 'owner_one', `nope${i}`, '5.5.5.5');
+  if (r.status !== 401) failIps.push(`${i}:${r.status}`);
+}
+check('۱۰ رمز غلط پشت‌سرهم همگی 401 (نه 429)', failIps.length === 0, failIps);
+const lockedShop = await loginTry(`/api/shops/${shopId}/login`, 'owner_one', 'nope11', '5.5.5.5');
+check('تلاش یازدهم با همان IP → 429', lockedShop.status === 429, lockedShop.json);
+check('پیام 429 زمان انتظار را می‌گوید', /۱۵ دقیقه/.test(lockedShop.json?.error || ''), lockedShop.json);
+const lockedRight = await loginTry(`/api/shops/${shopId}/login`, 'owner_one', 'pass1234', '5.5.5.5');
+check('رمز درست هم موقع قفل قبول نمی‌شود → 429', lockedRight.status === 429, lockedRight.json);
+
+// قفل به IP و به آرایشگاه محدود است
+const otherIp = await loginTry(`/api/shops/${shopId}/login`, 'owner_one', 'pass1234', '5.5.5.6');
+check('IP دیگر دست‌نخورده می‌ماند → 200', otherIp.status === 200, otherIp.json);
+const otherShop = await loginTry(`/api/shops/${otherId}/login`, 'owner_one', 'pass1234', '5.5.5.5');
+check('آرایشگاه دیگر با همان IP قفل نیست → 200', otherShop.status === 200, otherShop.json);
+
+// تلاش با نام کاربری مدیر سایت از صفحهٔ آرایشگاه، در همان سهمیهٔ «super» شمرده می‌شود
+for (let i = 1; i <= 10; i++) await loginTry(`/api/shops/${shopId}/login`, SUPER_USER, `nope${i}`, '9.9.9.9');
+const superLocked = await loginTry('/api/login', SUPER_USER, SUPER_PASS, '9.9.9.9');
+check('سهمیهٔ super از صفحهٔ آرایشگاه هم یکی است → 429', superLocked.status === 429, superLocked.json);
+const otherUserShop = await loginTry(`/api/shops/${shopId}/login`, 'owner_one', 'pass1234', '9.9.9.9');
+check('قفل super مانع ورود مالک آرایشگاه نمی‌شود → 200', otherUserShop.status === 200, otherUserShop.json);
+
+// ورود درست شمارنده را پاک می‌کند
+for (let i = 1; i <= 6; i++) await loginTry(`/api/shops/${shopId}/login`, 'owner_one', `nope${i}`, '7.7.7.7');
+const midGood = await loginTry(`/api/shops/${shopId}/login`, 'owner_one', 'pass1234', '7.7.7.7');
+check('ورود درست قبل از آستانه → 200', midGood.status === 200, midGood.json);
+const rowAfterOk = db.prepare('SELECT tries FROM auth_log WHERE key = ?').bind(`${shopId}|7.7.7.7`).first();
+check('شمارندهٔ آن IP پس از ورود درست پاک شد', !rowAfterOk, rowAfterOk);
+const failAgain = [];
+for (let i = 1; i <= 6; i++) {
+  const r = await loginTry(`/api/shops/${shopId}/login`, 'owner_one', `again${i}`, '7.7.7.7');
+  if (r.status !== 401) failAgain.push(`${i}:${r.status}`);
+}
+check('شمارش از اول شروع می‌شود (۶ تلاش بعدی هم 401)', failAgain.length === 0, failAgain);
+
+// اجرای محلی (wrangler dev) cf-connecting-ip ندارد؛ آنجا چیزی شمرده نمی‌شود
+for (let i = 1; i <= 12; i++) await loginTry(`/api/shops/${shopId}/login`, 'owner_one', 'no-ip', undefined);
+const noIp = await loginTry(`/api/shops/${shopId}/login`, 'owner_one', 'pass1234', undefined);
+check('بدون سربرگ IP محدودیت اعمال نمی‌شود → 200', noIp.status === 200, noIp.json);
+
 /* ================================================================ 4. قواعد زمان */
 section('جلوگیری از ثبت نوبت در گذشته');
 const pastDate = await api('PUT', `/api/admin/shops/${shopId}/data`, {

@@ -16,6 +16,12 @@ const USERNAME_RE = /^[a-z0-9_.-]{3,32}$/;
 const TIME_ZONE = 'Asia/Tehran'; // ساعت مرجع برای جلوگیری از رزرو در زمان گذشته
 const PAST_GRACE_MIN = 5;        // چند دقیقه تأخیر مجاز (مثلاً ثبت مشتری که همین الان نشسته)
 
+// محدودیت تلاش ورود: رمزهای غلط هر IP شمرده می‌شود و با پر شدن آستانه، آن IP قفل می‌شود.
+// شمارنده در جدول auth_log می‌ماند تا بین isolateها از دست نرود.
+const MAX_LOGIN_FAILS = 10;          // چند رمز غلط مجاز است
+const LOGIN_LOCK_MS = 15 * 60 * 1000; // هم پنجرهٔ شمارش، هم مدت قفل
+const LOGIN_MSG = 'چند بار رمز اشتباه وارد شده است؛ ۱۵ دقیقه دیگر دوباره تلاش کنید';
+
 // اشتراک: هر آرایشگاه جدید ۳۰ روز رایگان دارد. ۷ روز آخر هشدار، بعد از پایان ۷ روز «فقط مشاهده»
 // و پس از آن دقیقاً مثل غیرفعال‌سازی دستی رفتار می‌شود.
 const FREE_DAYS = 30;
@@ -107,6 +113,9 @@ async function migrate(db) {
       source_shop TEXT, status TEXT NOT NULL DEFAULT 'new', ip TEXT, created_at INTEGER NOT NULL)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS receipts (
       id TEXT PRIMARY KEY, lead_id TEXT, shop_id TEXT, plan INTEGER NOT NULL, image TEXT NOT NULL, created_at INTEGER NOT NULL)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS auth_log (
+      key TEXT PRIMARY KEY, tries INTEGER NOT NULL DEFAULT 0,
+      blocked_until INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)`),
     db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('secret', ?)").bind(randomHex(32)),
   ]);
   secret = (await db.prepare("SELECT value FROM meta WHERE key = 'secret'").first()).value;
@@ -157,6 +166,42 @@ function isSuperLogin(env, username, password) {
   const userOk = safeEqual(toEn(username).toLowerCase(), c.username);
   const passOk = safeEqual(String(password ?? ''), c.password);
   return userOk && passOk;
+}
+
+// سهمیهٔ شمارش: ورود مدیر سایت همیشه «super»؛ ورود آرایشگاه با نام آرایشگاه،
+// مگر اینکه کسی نام کاربری مدیر سایت را از صفحهٔ یک آرایشگاه بزند که آن‌وقت
+// تلاشش در همان سهمیهٔ «super» شمرده می‌شود (تا سقف با پراکندن روی آرایشگاه‌ها بالا نرود).
+function loginScope(env, username, shopId) {
+  const c = adminCreds(env);
+  return c && toEn(username).toLowerCase() === c.username ? 'super' : shopId;
+}
+// بدون cf-connecting-ip (اجرای محلی) چیزی شمرده نمی‌شود
+function loginKey(scope, request) {
+  const ip = request.headers.get('cf-connecting-ip') || '';
+  return ip ? `${scope}|${ip}` : null;
+}
+async function assertLoginAllowed(db, key) {
+  if (!key) return;
+  const row = await db.prepare('SELECT blocked_until FROM auth_log WHERE key = ?').bind(key).first();
+  if (row && row.blocked_until > Date.now()) throw new HttpError(429, LOGIN_MSG);
+}
+async function countLoginFail(db, key) {
+  if (!key) return;
+  const now = Date.now();
+  // تلاش‌های قدیمی‌تر از پنجره شمارش نمی‌شوند؛ قفل که بخورد تا پایان مهلت باز می‌ماند
+  const row = await db.prepare('SELECT tries, updated_at AS at FROM auth_log WHERE key = ?').bind(key).first();
+  const tries = (row && now - row.at < LOGIN_LOCK_MS ? row.tries : 0) + 1;
+  await db.batch([
+    db.prepare(`INSERT INTO auth_log (key, tries, blocked_until, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET tries = excluded.tries,
+        blocked_until = excluded.blocked_until, updated_at = excluded.updated_at`)
+      .bind(key, tries, tries >= MAX_LOGIN_FAILS ? now + LOGIN_LOCK_MS : 0, now),
+    db.prepare('DELETE FROM auth_log WHERE updated_at < ?').bind(now - 24 * 3600e3),
+  ]);
+}
+// ورود درست یعنی این IP رمز را بلد است؛ شمارندهٔ اشتباهات تایپ‌شده پاک می‌شود
+async function clearLoginFails(db, key) {
+  if (key) await db.prepare('DELETE FROM auth_log WHERE key = ?').bind(key).run();
 }
 
 async function makeToken(payload) {
@@ -415,8 +460,14 @@ async function handleApi(request, env, path) {
   // ---- ورود مدیر سایت (صفحهٔ اصلی)
   if (method === 'POST' && path === '/api/login') {
     const { username, password } = await readJson(request);
+    const key = loginKey('super', request);
+    await assertLoginAllowed(db, key);
     if (!adminCreds(env)) throw new HttpError(503, 'حساب مدیر سایت در Cloudflare تنظیم نشده است (ADMIN_USERNAME و ADMIN_PASSWORD)');
-    if (!isSuperLogin(env, username, password)) throw new HttpError(401, 'نام کاربری یا رمز عبور اشتباه است');
+    if (!isSuperLogin(env, username, password)) {
+      await countLoginFail(db, key);
+      throw new HttpError(401, 'نام کاربری یا رمز عبور اشتباه است');
+    }
+    await clearLoginFails(db, key);
     return json(await superToken());
   }
 
@@ -447,13 +498,22 @@ async function handleApi(request, env, path) {
     if (method === 'POST' && parts[2] === 'login' && parts.length === 3) {
       const { username, password } = await readJson(request);
       const u = toEn(username).toLowerCase();
+      const key = loginKey(loginScope(env, username, id), request);
+      await assertLoginAllowed(db, key);
       const { shop, data } = await getShop(db, id);
-      if (isSuperLogin(env, username, password)) return json(await superToken());
+      if (isSuperLogin(env, username, password)) {
+        await clearLoginFails(db, key);
+        return json(await superToken());
+      }
       if (!shop.active) throw new HttpError(403, 'این آرایشگاه غیرفعال شده است');
       const acc = await db.prepare('SELECT username, pass, role, barber_id FROM accounts WHERE shop_id = ? AND username = ?').bind(id, u).first();
-      if (!acc || !(await checkPassword(toEn(password), acc.pass))) throw new HttpError(401, 'نام کاربری یا رمز عبور اشتباه است');
+      if (!acc || !(await checkPassword(toEn(password), acc.pass))) {
+        await countLoginFail(db, key);
+        throw new HttpError(401, 'نام کاربری یا رمز عبور اشتباه است');
+      }
       // آرایشگاه منقضی: فقط مالک (برای تمدید) وارد می‌شود
       if (shop.sub.state === 'expired' && acc.role !== 'owner') throw expiredError(shop.name);
+      await clearLoginFails(db, key);
       const name = acc.role === 'owner' ? `مالک ${shop.name}` : (data.barbers.find((b) => b.id === acc.barber_id)?.name || acc.username);
       return json({
         token: await makeToken({ r: acc.role, s: id, u: acc.username, h: passMark(acc.pass) }),
